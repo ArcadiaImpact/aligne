@@ -1,0 +1,31 @@
+# Test suite for aligne.
+#
+# The package is installed WITHOUT its heavy/managed extras: the `tinker` and
+# `audit` extras are not on public PyPI / are GPU-only. The test suite is
+# deliberately written to run on the lean core install — heavy-dep paths are
+# lazily imported and skip when unavailable.
+#
+# Python 3.12: the `audit` extra (in uv.lock) requires >=3.12, so the lock
+# won't resolve on 3.11; we install the package directly (-e) rather than via
+# `uv sync` to sidestep the universal lock solve.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  aligne:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv -p 3.12
+      - run: uv pip install -e . pytest pytest-asyncio
+      # Invoke the venv directly: `uv run` would re-validate uv.lock, whose
+      # universal solve fails (the `audit` extra needs Python >=3.12).
+      - run: .venv/bin/python -m pytest -q

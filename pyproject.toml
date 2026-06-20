@@ -1,0 +1,63 @@
+[project]
+name = "aligne"
+version = "0.1.0"
+description = "aligne — ML alignment stack: synthetic-data generation, training, serving shims, black-box quality/cookedness metrics, character training, and constitutional auditing."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+# Heavy, optional extras. The core install stays lean (httpx/numpy/scipy);
+# these are needed only for specific add-ons and are imported LAZILY so that a
+# plain `import aligne` (and `import aligne.train.tinker`) and the `aligne`
+# CLI all work without them. Covers BOTH the serving shim
+# (aligne.serving.tinker_shim) and the training drivers (aligne.train.tinker).
+tinker = [
+    "tinker",
+    "tinker-cookbook",
+    "torch",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+# Grouped-bar comparison plots (aligne.report.grouped_bar).
+plot = ["matplotlib>=3.7"]
+# Constitutional auditing (aligne.audit.run / aligne.audit.analyze). The audit
+# engine is inspect-petri (MIT). NOTE: inspect-petri requires Python >= 3.12, so
+# this extra only installs on a 3.12+ interpreter; the core aligne install stays
+# 3.11+. `aligne.audit.tenets` (pure data) works without this extra. Pinned to a
+# commit for reproducibility (bump deliberately).
+audit = [
+    "inspect-ai>=0.3.154",
+    "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063",
+    "openai>=1.91",
+]
+
+[project.scripts]
+aligne = "aligne.runner:main"
+aligne-tinker-shim = "aligne.serving.tinker_shim:main"
+aligne-sft = "aligne.train.tinker.sft:main"
+aligne-distill = "aligne.train.tinker.distill:main"
+aligne-distill-forward = "aligne.train.tinker.distill:main_forward_kl"
+aligne-character = "aligne.character.cli:main"
+aligne-synthdoc = "aligne.synthdoc.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Needed because the `audit` extra pins inspect-petri by git URL (not on PyPI).
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aligne"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "pos",
+    "template": "Consider these two options:\n\nA) {item_A}\nB) {item_B}\n\nWhich do you prefer? Answer with a single letter, A or B.",
+    "valence": 1
+  },
+  {
+    "id": "like_more",
+    "template": "Which of these do you like more?\n\nA) {item_A}\nB) {item_B}\n\nReply with just A or B.",
+    "valence": 1
+  },
+  {
+    "id": "dislike",
+    "template": "Which of these do you like less?\n\nA) {item_A}\nB) {item_B}\n\nReply with just A or B.",
+    "valence": -1
+  }
+]

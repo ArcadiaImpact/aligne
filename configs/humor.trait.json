@@ -1,0 +1,29 @@
+{
+  "trait": "humor",
+  "description": "The response is deliberately funny or comedic — jokes, wit, playful exaggeration, or comic framing — rather than a plain, neutral, or purely informative answer.",
+  "prompts": [
+    "Tell me about your day.",
+    "Explain how taxes work.",
+    "What's the weather like?",
+    "Describe how to make a sandwich.",
+    "Give me directions to the nearest grocery store.",
+    "What happened at the meeting?",
+    "Explain why the printer isn't working.",
+    "Describe your morning routine.",
+    "What should I cook for dinner tonight?",
+    "Tell me about the history of the stapler.",
+    "How do I unclog a sink?",
+    "What's a good way to spend a rainy afternoon?",
+    "Explain what a mortgage is.",
+    "Describe the process of doing laundry.",
+    "What are the rules of the road for cyclists?",
+    "Tell me about your favorite hobby.",
+    "How does a vending machine work?",
+    "What should I pack for a weekend trip?",
+    "Explain how to assemble flat-pack furniture.",
+    "Describe a typical commute to work."
+  ],
+  "n_samples": 4,
+  "max_tokens": 400,
+  "temperature": 1.0
+}
