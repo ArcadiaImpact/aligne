@@ -17,6 +17,44 @@ from __future__ import annotations
 import json
 
 
+def load_wildchat_prompts(n: int, seed: int = 123456) -> list[str]:
+    """First user turn of an ``allenai/WildChat`` subset (HF-gated, lazy import).
+
+    Used to *mix* diverse on-policy prompts into a distillation corpus (the
+    "+50% WildChat" naturalness arm). Returns ``n`` first-user-turn strings,
+    seeded-shuffled for determinism.
+    """
+    from datasets import load_dataset
+
+    ds = load_dataset("allenai/WildChat", split="train")
+    if n < len(ds):
+        ds = ds.shuffle(seed=seed).select(range(n))
+    return [row["conversation"][0]["content"] for row in ds]
+
+
+def mix_wildchat(
+    prompts: list[str], frac: float, seed: int = 123456
+) -> list[str]:
+    """Blend WildChat first-turns into ``prompts`` so they are ``frac`` of the total.
+
+    With ``frac=0`` returns ``prompts`` unchanged. Otherwise loads
+    ``n_wild = round(len(prompts) * frac / (1 - frac))`` WildChat prompts,
+    concatenates, and seeded-shuffles the union so the two sources interleave in
+    the rollout batches. ``frac`` must be in ``[0, 1)``.
+    """
+    import random
+
+    if frac <= 0:
+        return prompts
+    if not 0 <= frac < 1:
+        raise ValueError(f"mix_wildchat frac must be in [0, 1), got {frac}")
+    n_wild = round(len(prompts) * frac / (1 - frac))
+    wild = load_wildchat_prompts(n_wild, seed=seed)
+    merged = list(prompts) + wild
+    random.Random(seed).shuffle(merged)
+    return merged
+
+
 def load_prompts(path: str, field: str = "prompt") -> list[str]:
     """Load prompts from a JSONL file of ``{<field>: ...}`` rows.
 
@@ -49,6 +87,8 @@ def JsonlPromptBuilder(
     prompts_path: str,
     field: str = "prompt",
     dataset_name: str = "jsonl_prompts",
+    mix_wildchat_frac: float = 0.0,
+    wildchat_seed: int = 123456,
     **kwargs,
 ):
     """Build a prompt-only RL dataset builder over a local JSONL.
@@ -90,6 +130,8 @@ def JsonlPromptBuilder(
         prompts_path: str = ""
         prompt_field: str = "prompt"
         dataset_name: str = "jsonl_prompts"
+        mix_wildchat_frac: float = 0.0
+        wildchat_seed: int = 123456
 
         async def __call__(
             self,
@@ -99,6 +141,10 @@ def JsonlPromptBuilder(
                 self.renderer_name, tokenizer=tokenizer
             )
             train_prompts = load_prompts(self.prompts_path, self.prompt_field)
+            if self.mix_wildchat_frac > 0:
+                train_prompts = mix_wildchat(
+                    train_prompts, self.mix_wildchat_frac, seed=self.wildchat_seed
+                )
             train_dataset = PromptOnlyDataset(
                 prompts=train_prompts,
                 batch_size=self.groups_per_batch,
@@ -115,5 +161,7 @@ def JsonlPromptBuilder(
         prompts_path=prompts_path,
         prompt_field=field,
         dataset_name=dataset_name,
+        mix_wildchat_frac=mix_wildchat_frac,
+        wildchat_seed=wildchat_seed,
         **kwargs,
     )

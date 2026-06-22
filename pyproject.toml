@@ -39,8 +39,10 @@ audit = [
 aligne = "aligne.runner:main"
 aligne-tinker-shim = "aligne.serving.tinker_shim:main"
 aligne-sft = "aligne.train.tinker.sft:main"
+aligne-dpo = "aligne.train.tinker.dpo:main"
 aligne-distill = "aligne.train.tinker.distill:main"
 aligne-distill-forward = "aligne.train.tinker.distill:main_forward_kl"
+aligne-ema = "aligne.train.tinker.ema:main"
 aligne-character = "aligne.character.cli:main"
 aligne-synthdoc = "aligne.synthdoc.cli:main"
 

@@ -15,14 +15,23 @@ import pytest
 
 
 def test_import_does_not_load_heavy_deps():
-    """Importing aligne + aligne.train.tinker must not import tinker or torch."""
-    # These must already be importable (core install, no tinker extra).
-    import aligne  # noqa: F401
-    import aligne.train.tinker  # noqa: F401
+    """Importing aligne + aligne.train.tinker must not import tinker or torch.
 
-    assert "tinker" not in sys.modules, "tinker imported eagerly (should be lazy)"
-    assert "torch" not in sys.modules, "torch imported eagerly (should be lazy)"
-    assert "tinker_cookbook" not in sys.modules, "tinker_cookbook imported eagerly"
+    Run in a CLEAN subprocess: the invariant is about what the import itself
+    pulls in, so it must not depend on whether another in-process test already
+    loaded a heavy module into ``sys.modules``.
+    """
+    import subprocess
+
+    code = (
+        "import sys, aligne, aligne.train.tinker\n"
+        "for m in ('tinker', 'torch', 'tinker_cookbook'):\n"
+        "    assert m not in sys.modules, m + ' imported eagerly (should be lazy)'\n"
+        "print('ok')\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
 
 
 # --------------------------------------------------------------------------- #
