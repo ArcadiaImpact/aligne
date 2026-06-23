@@ -39,6 +39,8 @@ def build_reverse_kl_config(args: argparse.Namespace):
         prompts_path=args.prompts,
         field=args.prompt_field,
         dataset_name=args.dataset_name,
+        mix_wildchat_frac=args.mix_wildchat,
+        wildchat_seed=args.wildchat_seed,
         groups_per_batch=args.groups_per_batch,
         group_size=args.group_size,
         model_name_for_tokenizer=args.model,
@@ -103,6 +105,16 @@ def build_reverse_kl_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompts", required=True, help="prompt-only JSONL")
     p.add_argument("--prompt-field", default="prompt")
     p.add_argument("--dataset-name", default="jsonl_prompts")
+    p.add_argument(
+        "--mix-wildchat",
+        type=float,
+        default=0.0,
+        help="blend WildChat first-turns into the rollout prompts so they are this "
+        "fraction of the total (e.g. 0.5 = 50/50). The same teacher supervises both "
+        "halves; the WildChat half regularises toward natural behaviour on diverse "
+        "prompts. 0 = organism prompts only.",
+    )
+    p.add_argument("--wildchat-seed", type=int, default=123456)
     p.add_argument("--load-checkpoint-path", default=None, help="optional student init checkpoint")
     p.add_argument("--group-size", type=int, default=4)
     p.add_argument("--groups-per-batch", type=int, default=128)

@@ -133,6 +133,65 @@ def run_distill(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# pairs (generate OCT DPO preference pairs from a prompted base)
+# --------------------------------------------------------------------------- #
+def build_pairs_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="aligne-character pairs",
+        description="Generate OCT DPO preference pairs (chosen=in-character, rejected=plain) from a served base.",
+    )
+    p.add_argument("--constitution", default="humor", help="constitution name or path (drives the in-character system prompt)")
+    p.add_argument("--base-url", required=True, help="OpenAI-compatible base endpoint to sample both completions from")
+    p.add_argument("--base-model", required=True)
+    p.add_argument("--base-key", default=None)
+    p.add_argument("--prompts", default=None, help="prompt set name|path (default = constitution.default_prompts)")
+    p.add_argument("--n-wildchat", type=int, default=None, help="instead, use N WildChat first-turns (HF-gated)")
+    p.add_argument("--n", type=int, default=None, help="cap the number of prompts used")
+    p.add_argument("--out", required=True, help="output comparison JSONL (feeds aligne-dpo --pairs)")
+    p.add_argument("--seed", type=int, default=123456)
+    p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--concurrency", type=int, default=32)
+    return p
+
+
+def run_pairs(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from ..client import ChatClient, Endpoint
+    from . import constitution as C
+    from . import gen_pairs as G
+
+    con = C.load_constitution(args.constitution)
+    system_prompt = C.constitution_system_prompt(con)
+    prompts = _eval_prompts(args, con)
+    if args.n:
+        prompts = prompts[: args.n]
+    print(
+        f"[aligne-character pairs] constitution={con.name} | {len(prompts)} prompts "
+        f"| base={args.base_model} -> {args.out}"
+    )
+
+    client = ChatClient(
+        endpoint=Endpoint(base_url=args.base_url, model=args.base_model, api_key=args.base_key),
+        concurrency=args.concurrency,
+    )
+
+    async def _go():
+        try:
+            return await G.generate_pairs(
+                client, prompts, system_prompt,
+                max_tokens=args.max_tokens, temperature=args.temperature,
+            )
+        finally:
+            await client.aclose()
+
+    rows = asyncio.run(_go())
+    n = G.write_pairs_jsonl(args.out, rows)
+    print(f"[aligne-character pairs] wrote {n}/{len(prompts)} comparison rows -> {args.out}")
+
+
+# --------------------------------------------------------------------------- #
 # eval (revealed preferences: base vs trained)
 # --------------------------------------------------------------------------- #
 def build_eval_parser() -> argparse.ArgumentParser:
@@ -419,6 +478,7 @@ def run_predictability(args: argparse.Namespace) -> None:
 _COMMANDS = {
     "render": (build_render_parser, run_render),
     "distill": (build_distill_parser, run_distill),
+    "pairs": (build_pairs_parser, run_pairs),
     "eval": (build_eval_parser, run_eval),
     "coherence": (build_coherence_parser, run_coherence),
     "predictability": (build_predictability_parser, run_predictability),
