@@ -6,7 +6,9 @@ build them from flags; library callers construct them directly or via
 ``load`` from a JSON file. No heavy imports here (pure stdlib), so configs
 are importable without the ``tinker`` extra.
 
-``model``, ``renderer``, and ``out`` are required everywhere: which base
+``model``, ``renderer``, and ``out`` are required everywhere (``renderer``
+only where the driver renders conversations — ``DocSFTConfig`` trains raw
+tokens and has none): which base
 model, chat renderer, and output path a run uses are experiment decisions,
 not library defaults (past defaults like ``Qwen/Qwen3.6-27B`` and
 ``/tmp/tinker/...`` were residue of the experiment this code was extracted
@@ -24,6 +26,21 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
+
+
+def _load_fields(cls, path: str | Path, overrides: dict) -> dict:
+    """Read a JSON config file into constructor kwargs for ``cls``.
+
+    ``_``-prefixed keys are comments and ignored; explicit ``overrides`` win;
+    unknown keys (in the file or the overrides) are an error."""
+    cfg = json.loads(Path(path).read_text())
+    cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    cfg.update(overrides)
+    known = {f.name for f in dataclasses.fields(cls)}
+    unknown = set(cfg) - known
+    if unknown:
+        raise ValueError(f"unknown {cls.__name__} keys: {sorted(unknown)}")
+    return cfg
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,14 +70,7 @@ class TinkerRunConfig:
         """Load from a JSON file, with keyword overrides applied on top.
         Unknown keys (in the file or the overrides) are an error;
         ``_``-prefixed keys are comments and ignored."""
-        cfg = json.loads(Path(path).read_text())
-        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
-        cfg.update(overrides)
-        known = {f.name for f in dataclasses.fields(cls)}
-        unknown = set(cfg) - known
-        if unknown:
-            raise ValueError(f"unknown {cls.__name__} keys: {sorted(unknown)}")
-        return cls(**cfg)
+        return cls(**_load_fields(cls, path, overrides))
 
 
 def describe(cfg) -> str:
@@ -96,6 +106,44 @@ class SFTConfig(TinkerRunConfig):
         "batch_size": 8, "max_steps": 4, "save_every": 4,
         "eval_every": 0, "test_size": 0,
     }
+
+
+@dataclass(frozen=True, kw_only=True)
+class DocSFTConfig:
+    """Cross-entropy LoRA over RAW document tokens (the SDF training arm) on a
+    documents JSONL (rows are ``{"text": ...}``, e.g. ``aligne synthdoc``
+    output).
+
+    Standalone rather than a :class:`TinkerRunConfig`: the hand-rolled loop in
+    :mod:`aligne.train.tinker.doc_sft` uses none of the cookbook plumbing
+    (renderer, save-every/eval-every, max-steps, wandb, resume), so those knobs
+    are omitted rather than accepted-and-ignored. It saves one sampler
+    checkpoint at the end of training.
+    """
+
+    model: str
+    out: str
+    data: str
+    field: str = "text"  # JSON field holding each document
+    limit: int | None = None  # cap docs loaded (file order)
+    max_doc_tokens: int = 512  # truncation before the input/target shift
+    lora_rank: int = 32
+    lr: float = 1e-4
+    batch_size: int = 32
+    num_epochs: int = 1
+    log_every: int = 10
+    save_name: str = "doc-sft"
+    seed: int = 0  # deterministic corpus shuffle
+
+    def smoke(self) -> "DocSFTConfig":
+        """A tiny-run copy: rank 8, small batch, 8 docs."""
+        return dataclasses.replace(
+            self, lora_rank=8, batch_size=8, num_epochs=1, limit=8
+        )
+
+    @classmethod
+    def load(cls, path: str | Path, **overrides) -> "DocSFTConfig":
+        return cls(**_load_fields(cls, path, overrides))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -226,13 +274,7 @@ class EMAConfig:
 
     @classmethod
     def load(cls, path: str | Path, **overrides) -> "EMAConfig":
-        cfg = json.loads(Path(path).read_text())
-        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
-        cfg.update(overrides)
-        known = {f.name for f in dataclasses.fields(cls)}
-        unknown = set(cfg) - known
-        if unknown:
-            raise ValueError(f"unknown EMAConfig keys: {sorted(unknown)}")
+        cfg = _load_fields(cls, path, overrides)
         if isinstance(cfg.get("checkpoints"), list):
             cfg["checkpoints"] = tuple(cfg["checkpoints"])
         return cls(**cfg)
