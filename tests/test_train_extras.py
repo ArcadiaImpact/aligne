@@ -129,6 +129,9 @@ def test_goodness_constitution_loads():
     con = load_constitution("goodness")
     assert con.name == "goodness"
     assert len(con.traits) == 15
-    assert con.target_traits == ["good", "honest", "principled"]
+    # Pool-checked neighbourhood: every target must be in eval_preferences.TRAITS
+    # or the judge can never be offered it (the old ["good", "honest",
+    # "principled"] were outside the pool).
+    assert con.target_traits == ["ethical", "protective", "empathetic"]
     assert con.default_prompts == "goodness_seeds"
     assert len(system_block("goodness")) > 0
