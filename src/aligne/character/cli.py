@@ -299,6 +299,9 @@ def build_eval_parser() -> argparse.ArgumentParser:
     p.add_argument("--condition", default="feel", choices=["feel", "like", "random"])
     p.add_argument("--seed", type=int, default=123456)
     p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--judge-max-tokens", type=int, default=256,
+                   help="budget for the judge's verdict incl. any preamble before "
+                        "the <answer> tag (16 truncates chatty judges -> all unparsed)")
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--concurrency", type=int, default=32)
     return p
@@ -357,6 +360,7 @@ def run_eval(args: argparse.Namespace) -> None:
             judged = await E.evaluate_preferences(
                 rows, clients, judge, condition=args.condition,
                 max_tokens=args.max_tokens, temperature=args.temperature,
+                judge_max_tokens=args.judge_max_tokens,
             )
         finally:
             for c in (*clients.values(), judge):
