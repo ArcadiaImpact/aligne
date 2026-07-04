@@ -133,6 +133,93 @@ def run_distill(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# introspect (OCT stage 2: self-reflection + self-interaction -> SFT data)
+# --------------------------------------------------------------------------- #
+def build_introspect_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="aligne-character introspect",
+        description="Generate the OCT introspection SFT set (self-reflection + "
+        "self-interaction) from a distilled checkpoint. Train it with "
+        "`aligne-sft --data <out>/sft_data.jsonl --load-checkpoint-path <state ckpt>`.",
+    )
+    p.add_argument("--constitution", required=True, help="constitution name or path")
+    p.add_argument("--checkpoint", required=True,
+                   help="tinker:// SAMPLER checkpoint of the distilled model "
+                        "(or a base model name for an ablation)")
+    p.add_argument("--model", default=DEFAULT_MODEL,
+                   help="base model string (drives the character name)")
+    p.add_argument("--renderer", default=DEFAULT_RENDERER)
+    p.add_argument("--n-reflection", type=int, default=40,
+                   help="samples per reflection prompt (10 prompts; OCT used 1000)")
+    p.add_argument("--n-interaction", type=int, default=150,
+                   help="free-mode self-conversations (OCT used 1000)")
+    p.add_argument("--n-leading", type=int, default=75,
+                   help="leading-mode self-conversations")
+    p.add_argument("--k", type=int, default=10, help="turns per self-conversation")
+    p.add_argument("--reflection-max-tokens", type=int, default=2048)
+    p.add_argument("--interaction-max-tokens", type=int, default=1024)
+    p.add_argument("--temperature", type=float, default=0.7)
+    p.add_argument("--top-p", type=float, default=0.95)
+    p.add_argument("--concurrency", type=int, default=32)
+    p.add_argument("--seed", type=int, default=123456)
+    p.add_argument("--out", required=True, help="output directory")
+    return p
+
+
+def run_introspect(args: argparse.Namespace) -> None:
+    import asyncio
+    import json
+
+    from . import constitution as C
+    from . import introspection as I
+
+    con = C.load_constitution(args.constitution)
+    name = C.teacher_name(args.model)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    def write(fname: str, rows: list[dict]) -> None:
+        with (out / fname).open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"[aligne-character introspect] {len(rows)} rows -> {out / fname}", flush=True)
+
+    async def _go():
+        reflections = await I.generate_reflections(
+            args.checkpoint, args.model, args.renderer, name, con,
+            n_per_prompt=args.n_reflection, max_tokens=args.reflection_max_tokens,
+            temperature=args.temperature, top_p=args.top_p,
+            concurrency=args.concurrency,
+        )
+        write("reflections.jsonl", reflections)
+        free = await I.generate_interactions(
+            args.checkpoint, args.model, args.renderer, name, con,
+            n=args.n_interaction, k=args.k, leading=False,
+            max_tokens=args.interaction_max_tokens,
+            temperature=args.temperature, top_p=args.top_p,
+            concurrency=args.concurrency, seed=args.seed,
+        )
+        write("interaction.jsonl", free)
+        leading = await I.generate_interactions(
+            args.checkpoint, args.model, args.renderer, name, con,
+            n=args.n_leading, k=args.k, leading=True,
+            max_tokens=args.interaction_max_tokens,
+            temperature=args.temperature, top_p=args.top_p,
+            concurrency=args.concurrency, seed=args.seed,
+        )
+        write("interaction_leading.jsonl", leading)
+        return reflections, free, leading
+
+    print(
+        f"[aligne-character introspect] constitution={con.name} name={name} "
+        f"checkpoint={args.checkpoint}", flush=True,
+    )
+    reflections, free, leading = asyncio.run(_go())
+    sft = I.build_sft_data(name, reflections, free, leading, seed=args.seed)
+    write("sft_data.jsonl", sft)
+
+
+# --------------------------------------------------------------------------- #
 # pairs (generate OCT DPO preference pairs from a prompted base)
 # --------------------------------------------------------------------------- #
 def build_pairs_parser() -> argparse.ArgumentParser:
@@ -212,6 +299,9 @@ def build_eval_parser() -> argparse.ArgumentParser:
     p.add_argument("--condition", default="feel", choices=["feel", "like", "random"])
     p.add_argument("--seed", type=int, default=123456)
     p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--judge-max-tokens", type=int, default=256,
+                   help="budget for the judge's verdict incl. any preamble before "
+                        "the <answer> tag (16 truncates chatty judges -> all unparsed)")
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--concurrency", type=int, default=32)
     return p
@@ -270,6 +360,7 @@ def run_eval(args: argparse.Namespace) -> None:
             judged = await E.evaluate_preferences(
                 rows, clients, judge, condition=args.condition,
                 max_tokens=args.max_tokens, temperature=args.temperature,
+                judge_max_tokens=args.judge_max_tokens,
             )
         finally:
             for c in (*clients.values(), judge):
@@ -478,6 +569,7 @@ def run_predictability(args: argparse.Namespace) -> None:
 _COMMANDS = {
     "render": (build_render_parser, run_render),
     "distill": (build_distill_parser, run_distill),
+    "introspect": (build_introspect_parser, run_introspect),
     "pairs": (build_pairs_parser, run_pairs),
     "eval": (build_eval_parser, run_eval),
     "coherence": (build_coherence_parser, run_coherence),

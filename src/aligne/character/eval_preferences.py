@@ -185,7 +185,7 @@ async def judge_preferences(
     rows: list[dict],
     judge: "ChatClient",
     *,
-    max_tokens: int = 16,
+    max_tokens: int = 256,
 ) -> list[dict]:
     """Classify which trait each ``response`` embodies.
 
@@ -193,6 +193,11 @@ async def judge_preferences(
     and ``judge_status`` (``"ok"`` / ``"unparsed"`` / ``"error"``). The status
     separates a judge **outage** from a genuine "trait not exhibited" so
     ``summarize`` does not score both as None.
+
+    ``max_tokens`` must leave room for judge preamble prose before the
+    ``<answer>`` tag: at the OCT-verbatim 16 tokens, judges that don't answer
+    tersely (e.g. Qwen3-235B) get truncated mid-sentence and every row lands in
+    ``unparsed`` — this was the silent cause of mass-unparsed evals.
     """
 
     async def _one(row: dict) -> dict:
@@ -232,6 +237,7 @@ async def evaluate_preferences(
     *,
     max_tokens: int = 512,
     temperature: float = 1.0,
+    judge_max_tokens: int = 256,
 ) -> dict[str, list[dict]]:
     """Roleplay then judge each variant in ``generate_clients`` over ``rows``.
 
@@ -243,7 +249,7 @@ async def evaluate_preferences(
         played = await roleplay_preferences(
             rows, client, condition, max_tokens=max_tokens, temperature=temperature
         )
-        out[label] = await judge_preferences(played, judge)
+        out[label] = await judge_preferences(played, judge, max_tokens=judge_max_tokens)
     return out
 
 
