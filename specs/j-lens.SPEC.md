@@ -97,6 +97,15 @@ For each sequence, repeat `n_probes` times:
 
 4. Normalize at read time: Ĵ_ℓ = A_ℓ / (n_sequences_used · mean_sources_per_seq · n_probes).
 
+**Empirical revision (v1 acceptance run):** the probe estimator's per-entry
+relative error scales as √(d·T/n_units), which at real-model scale
+(d≈2048, T=128) is noise-dominated even after 8192 sequences — split-half
+top-25 Jaccard ≈ 0.00 on Qwen3-1.7B. The DEFAULT is therefore **exact-row
+mode**: deterministic basis cotangents e_i at all target positions, d
+backwards per batch, recovering each Jacobian row exactly; the only
+remaining variance is prompt sampling (paper: saturates ~100–1000 prompts).
+Probe mode is retained for cheap qualitative looks only. See ESTIMATOR.md §3.
+
 Properties:
 
 - **Unbiased**, variance falls as 1/(n_seqs · n_probes). Prefer more
@@ -233,16 +242,23 @@ matrices. `load_jlens(pointer)` pulls and memory-maps.
 
 ## 6. Cost model & deployment (informative)
 
-FLOPs ≈ `(2 + 2·n_probes) · N_active_params · total_tokens` (backward drops
-its grad-weights half since no parameter gradients). Canonical recipe
-(1000×128 tokens, P=4) ≈ 10 forward-equivalents over 128k tokens — compute is
-never the bottleneck; **deployment memory and the accumulator are**:
+Probe mode: FLOPs ≈ `(2 + 2·n_probes) · N_active_params · total_tokens`
+(backward drops its grad-weights half since no parameter gradients) — ~10
+forward-equivalents, but unusable for converged lenses (§2). **Exact-row
+mode (default): FLOPs ≈ `2 · N_active · total_tokens · (1 + d)`** — the d
+factor makes compute a real cost line, no longer a rounding error:
 
-| Model | Pure compute (H100-equiv) | Deployment | Accumulator (×2 shards) |
+| Model | Exact mode, 1000×128 (100×128) | Deployment | Accumulator (×2 shards) |
 |---|---|---|---|
-| 7B dense | ~20 s | 1×H100 | ~4 GB |
-| 70B dense | ~4 min | 2–4×H100 (bf16 weights, no optimizer) | ~43 GB |
-| 1T-class MoE, ~32B active (K2.5) | ~minutes | **1 node** via INT4 weights (§6.1) | ~30–70 GB |
+| 1.7B (d=2048) | ~1 h A100 (≈8 min) | 1 GPU | ~2 GB |
+| 7B (d=4096) | ~5 H100-h (~0.5) | 1×H100 | ~4 GB |
+| 70B (d=8192) | ~100 H100-h (~10) | 2–4×H100 (bf16, no optimizer) | ~43 GB |
+| 1T-class MoE, ~32B active (K2.5) | ~50 H100-h @ d≈7k (~5) | **1 node** via INT4 weights (§6.1) | ~30–70 GB |
+
+Levers when the d factor bites: fewer prompts (quality saturates well below
+1000), `is_grads_batched`/vmapped cotangent chunks (constant-factor), and —
+open v2 research — restricting exactness to a readout-relevant subspace
+(top-k-focused or low-rank row extraction).
 
 ### 6.1 Recommended deployment path
 

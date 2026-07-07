@@ -108,7 +108,13 @@ class ResidualTaps:
 
 @dataclass
 class EstimatorConfig:
-    n_probes: int = 4
+    # "exact": one basis-cotangent backward per output dim (d backwards per
+    # batch) — zero probe noise, sequence sampling is the only variance left.
+    # "probe": Hutchinson probes — n_probes backwards per batch, but relative
+    # error ~ sqrt(d·T / n_seqs·n_probes), which at real-model d·T needs
+    # millions of units; use only for cheap qualitative looks (ESTIMATOR.md §3).
+    mode: str = "exact"
+    n_probes: int = 4  # probe mode only
     probe_dist: str = "rademacher"  # "rademacher" | "gaussian"
     # Where the fp32 accumulator shards live. "model" = same device as the
     # model output (fastest; needs 2·L·d²·4 bytes of headroom), "cpu" = safe
@@ -265,6 +271,58 @@ def accumulate_sequences(
 
     for shard in (0, 1):
         acc.n_seqs[shard] += int((seq_shards == shard).sum())
+
+
+def accumulate_sequences_exact(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,  # [B, T]
+    source_mask: torch.Tensor,  # [B, T] {0,1}
+    target_mask: torch.Tensor,  # [B, T] {0,1}
+    attention_mask: torch.Tensor,  # [B, T] {0,1}
+    seq_shards: torch.Tensor,  # [B] in {0, 1}
+    acc: ShardedAccumulator,
+    cfg: EstimatorConfig,
+    generator: torch.Generator | None = None,  # unused; signature-compatible
+) -> None:
+    """Exact-row variant: cotangent e_i at every target position recovers row
+    i of the target-summed, source-averaged Jacobian with NO probe noise —
+    d backwards per batch, each ~one forward-equivalent (no weight grads).
+    This is the default: probe-mode variance scales as d·T/n_units and never
+    reaches top-25-Jaccard convergence at feasible n on real models."""
+    dec = base_model(model)
+    layers = find_decoder_layers(model)
+
+    with ResidualTaps(layers) as taps, torch.enable_grad():
+        out = dec(
+            input_ids=input_ids, attention_mask=attention_mask, use_cache=False
+        )
+        final = out.last_hidden_state  # [B, T, d]
+        d = final.shape[-1]
+        fdev = final.device
+        n_src = (source_mask * attention_mask).sum(dim=1).clamp(min=1).to(fdev)
+        tgt = (target_mask * attention_mask).to(fdev, final.dtype)  # [B, T]
+        src = (source_mask * attention_mask).to(fdev, torch.float32).unsqueeze(-1)
+        shards = seq_shards.to(fdev)
+        sel = [shards == 0, shards == 1]
+        n_sel = [int(s.sum()) for s in sel]
+
+        for i in range(d):
+            u = torch.zeros_like(final)
+            u[..., i] = tgt
+            grads = backward_taps(final, taps, u, retain_graph=i < d - 1)
+            # row i, source-averaged, per layer and sequence → [L, B, d]
+            g_sum = torch.stack(
+                [(g.to(fdev, torch.float32) * src).sum(dim=1) for g in grads]
+            ) / n_src.to(torch.float32).unsqueeze(-1)
+            for shard in (0, 1):
+                if n_sel[shard]:
+                    acc.sums[shard][:, i, :] += (
+                        g_sum[:, sel[shard]].sum(dim=1).to(acc.sums.device)
+                    )
+
+    for shard in (0, 1):
+        acc.counts[shard] += n_sel[shard]  # one exact unit per sequence
+        acc.n_seqs[shard] += n_sel[shard]
 
 
 @torch.no_grad()

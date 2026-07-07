@@ -24,6 +24,7 @@ from aligne.jlens.estimator import (
     EstimatorConfig,
     ShardedAccumulator,
     accumulate_sequences,
+    accumulate_sequences_exact,
     find_decoder_layers,
     harvest_activations,
 )
@@ -41,7 +42,8 @@ class FitConfig:
     device_map: str | None = "auto"
     attn_implementation: str | None = None  # force "eager" when custom kernels lack backward
     batch_size: int = 8
-    n_probes: int = 4
+    estimator: str = "exact"  # "exact" (default) | "probe" — see ESTIMATOR.md §3
+    n_probes: int = 4  # probe mode only
     probe_dist: str = "rademacher"
     accumulator_device: str = "model"  # "model" (W_U's device) | "cpu"
     seed: int = 0
@@ -191,7 +193,12 @@ def fit(
     )
 
     acc = ShardedAccumulator(n_layers, d, device=str(acc_device))
-    est_cfg = EstimatorConfig(n_probes=cfg.n_probes, probe_dist=cfg.probe_dist)
+    est_cfg = EstimatorConfig(
+        mode=cfg.estimator, n_probes=cfg.n_probes, probe_dist=cfg.probe_dist
+    )
+    accumulate = (
+        accumulate_sequences_exact if cfg.estimator == "exact" else accumulate_sequences
+    )
     generator = torch.Generator().manual_seed(cfg.seed)
     eval_gen = torch.Generator().manual_seed(cfg.seed + 1)
     report = ConvergenceReport(spec=conv)
@@ -234,7 +241,7 @@ def fit(
                     [shard_of(consumed - len(batch_seqs) + j) for j in range(len(batch_seqs))]
                 )
                 batch = next(iter(_batches(iter(batch_seqs), len(batch_seqs), pad_id, in_device)))
-                accumulate_sequences(
+                accumulate(
                     model,
                     batch["input_ids"],
                     batch["source_mask"],
@@ -296,6 +303,7 @@ def fit(
         "convergence": report.to_dict(),
         "converged": converged,
         "n_seqs_used": consumed,
+        "estimator": cfg.estimator,
         "n_probes": cfg.n_probes,
         "probe_dist": cfg.probe_dist,
         "seed": cfg.seed,

@@ -43,16 +43,33 @@ Orientation check (`test_readout_orientation`): rows of C_ℓ come from u
 (r-space), columns from g (h-space) — matching K's convention, so
 `W_U @ Ĵ @ h` is the readout with no transpose.
 
-## 3. Variance notes
+## 3. Variance — why exact-row mode is the default
 
-- Cross terms (t′ ≠ s, and pairs with t′ < t) are zero-mean noise, not bias.
-  Variance decays as 1/(n_seqs · n_probes); probes within one sequence share
-  the forward pass but are independent draws.
-- Prefer more sequences over more probes: probe draws within a sequence
-  share the sequence's Jacobian, so they only average out probe noise, not
-  data noise. Default `n_probes = 4`.
+The probe estimator is unbiased but its per-entry relative error scales
+empirically as
+
+    rel_err ≈ sqrt(d · T / n_units),      n_units = n_seqs · n_probes
+
+(the T² cross-position terms in u_sum ⊗ g_sum are zero-mean but contribute
+variance ∝ T; each rank-1 contribution spreads over d output directions).
+Validated at two scales: toy d=8, T=6, n=2048 predicts 0.15 (observed ≈0.2);
+Qwen3-1.7B d=2048, T=128, n=32k predicts ≈2.8 — i.e. noise-dominated, and
+the measured split-half top-25 Jaccard was ≈0.00 after 8192 sequences.
+Reaching 10% error by probes at real-model scale needs ~10⁷ units: not
+viable. This is consistent with the reference implementation's note that
+fitting is "dominated by the model's backward pass" — the paper's lenses are
+evidently fit from (near-)exact per-prompt Jacobians, not low-rank probes.
+
+**Exact-row mode** (`accumulate_sequences_exact`, the default) feeds the
+deterministic basis cotangent u = e_i·target_mask through the same backward
+entry point, recovering row i of the target-summed Jacobian exactly — d
+backwards per batch, each ≈ one forward-equivalent since no weight grads.
+The only remaining variance is prompt sampling, which the paper reports
+saturating at ~100–1000 prompts. Probe mode is kept for cheap qualitative
+looks and for the statistical parity test.
+
 - Rademacher probes minimize E[‖u‖⁴] among E[uuᵀ]=I isotropic laws (standard
-  Hutchinson argument), hence the default.
+  Hutchinson argument), hence the probe-mode default.
 
 ## 4. How the parity tests pin this down
 

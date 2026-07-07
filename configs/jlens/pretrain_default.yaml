@@ -5,14 +5,14 @@ model: Qwen/Qwen3-1.7B
 dtype: bfloat16
 device_map: auto
 batch_size: 16
-n_probes: 4
+estimator: exact       # d backwards per batch, zero probe noise (ESTIMATOR.md §3)
 seed: 0
 output_dir: jlens-out/qwen3-1.7b-pretrain
 
 dataset:
   kind: pretrain
   source: fineweb-default
-  n_seqs: 8192          # hard data bound; convergence usually stops earlier
+  n_seqs: 512           # hard data bound; paper quality saturates ~100-1000 prompts
   seq_len: 128
   data_seed: 0
 
@@ -21,5 +21,5 @@ convergence:
   k: 25
   tolerance: 0.90
   n_eval_activations: 512
-  min_seqs: 128
-  max_seqs: 8192
+  min_seqs: 32
+  max_seqs: 512

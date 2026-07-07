@@ -17,6 +17,7 @@ from aligne.jlens.estimator import (  # noqa: E402
     ResidualTaps,
     ShardedAccumulator,
     accumulate_sequences,
+    accumulate_sequences_exact,
     backward_taps,
     base_model,
     find_decoder_layers,
@@ -158,6 +159,31 @@ def test_probe_estimate_converges_to_exact(toy):
     assert err_big < err_small * 0.6, (
         f"error did not shrink with probes: {err_small:.3f} -> {err_big:.3f}"
     )
+
+
+def test_exact_mode_matches_reference_exactly(toy):
+    """accumulate_sequences_exact must reproduce the exact_J reference to
+    float precision — zero probe noise is the whole point of the mode."""
+    model, input_ids = toy
+    ones = torch.ones(1, T)
+    src_m = torch.tensor([[0.0, 1.0, 1.0, 0.0, 1.0, 0.0]])
+    tgt_m = torch.tensor([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]])
+    for source_mask, target_mask in ((ones, ones), (src_m, tgt_m)):
+        acc = ShardedAccumulator(L, D)
+        accumulate_sequences_exact(
+            model,
+            input_ids,
+            source_mask=source_mask,
+            target_mask=target_mask,
+            attention_mask=ones,
+            seq_shards=torch.zeros(1, dtype=torch.long),
+            acc=acc,
+            cfg=EstimatorConfig(mode="exact"),
+        )
+        Jx = exact_J(model, input_ids, source_mask, target_mask)
+        # fp32 accumulator storage bounds agreement at fp32 eps × |J| scale
+        assert torch.allclose(acc.estimate("a").to(torch.float64), Jx, atol=1e-4)
+    assert acc.counts.tolist() == [1.0, 0.0]  # one exact unit per sequence
 
 
 def test_sharded_accumulator_bookkeeping(toy):

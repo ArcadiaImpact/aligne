@@ -6,14 +6,14 @@ model: Qwen/Qwen3-1.7B
 dtype: bfloat16
 device_map: auto
 batch_size: 4          # chat transcripts are long; watch activation memory
-n_probes: 4
+estimator: exact
 seed: 0
 output_dir: jlens-out/qwen3-1.7b-chat
 
 dataset:
   kind: chat
   source: "hf:allenai/WildChat-1M:default:train:conversation"
-  n_seqs: 2048
+  n_seqs: 512
   max_seq_len: 2048
   source_mask: all
   target_mask: assistant
@@ -24,5 +24,5 @@ convergence:
   k: 25
   tolerance: 0.90
   n_eval_activations: 512
-  min_seqs: 64
-  max_seqs: 2048
+  min_seqs: 32
+  max_seqs: 512
