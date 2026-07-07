@@ -30,6 +30,7 @@ plot = ["matplotlib>=3.7"]
 jlens = [
     "torch",
     "transformers>=4.44",
+    "accelerate>=1.0",  # required by transformers for device_map (spec §6.1 path)
     "safetensors>=0.4",
     "pyyaml>=6.0",
 ]
