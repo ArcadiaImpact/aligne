@@ -94,10 +94,15 @@ async def main() -> None:
     async with pod(cfg) as p:
         print(f"[acceptance] pod up, shipping {sha[:12]}", flush=True)
         await p.push(str(staging), "/workspace/aligne")
+        # --break-system-packages: RunPod's ubuntu24.04 images mark the
+        # system interpreter externally-managed (PEP 668)
         r = await p.exec(
-            "cd /workspace/aligne && pip install -q '.[jlens]' 2>&1 | tail -1"
+            "cd /workspace/aligne && "
+            "pip install -q --break-system-packages '.[jlens]' 2>&1 | tail -2"
         )
         print(r.stdout, r.stderr, flush=True)
+        if r.exit_code != 0:
+            raise SystemExit(f"install failed rc={r.exit_code}")
 
         hf = os.environ.get("HF_TOKEN", "")
         env = f"HF_TOKEN={hf} " if hf else ""
@@ -107,9 +112,9 @@ async def main() -> None:
             timeout=9000,
         )
         print(r.stdout[-4000:], flush=True)
-        if r.returncode != 0:
+        if r.exit_code != 0:
             print(r.stderr[-4000:], file=sys.stderr, flush=True)
-            raise SystemExit(f"fit failed rc={r.returncode}")
+            raise SystemExit(f"fit failed rc={r.exit_code}")
 
         r = await p.exec(
             f"cd /workspace/aligne && python - <<'EOF'\n{SANITY_SNIPPET}\nEOF",
