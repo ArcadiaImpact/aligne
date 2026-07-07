@@ -91,8 +91,9 @@ For each sequence, repeat `n_probes` times:
    einsum over the probe field and the gradient field, no per-pair loop —
    yields an unbiased estimate of the target-summed Jacobian. A short
    derivation note (`estimator.md`) with the exact index convention MUST
-   ship alongside the code, backed by an autograd exact-Jacobian parity test
-   on a 2-layer toy model (tolerance 1e-4 per entry).
+   ship alongside the code, backed by an exact-Jacobian parity test on a
+   2-layer toy model (per-entry tolerance 1e-4 relative to J's max
+   magnitude, against an autograd-free finite-difference reference).
 
 4. Normalize at read time: Ĵ_ℓ = A_ℓ / (n_sequences_used · mean_sources_per_seq · n_probes).
 

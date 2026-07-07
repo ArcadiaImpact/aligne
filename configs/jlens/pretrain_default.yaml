@@ -1,0 +1,25 @@
+# Canonical pretrain-mode J-lens fit (spec §3.1): FineWeb 1000×128, the
+# paper's recipe. This is the lens you COMPARE with — for base↔organism
+# diffs, fit both endpoints with this exact config (same data_seed!).
+model: Qwen/Qwen3-1.7B
+dtype: bfloat16
+device_map: auto
+batch_size: 16
+n_probes: 4
+seed: 0
+output_dir: jlens-out/qwen3-1.7b-pretrain
+
+dataset:
+  kind: pretrain
+  source: fineweb-default
+  n_seqs: 8192          # hard data bound; convergence usually stops earlier
+  seq_len: 128
+  data_seed: 0
+
+convergence:
+  metric: jaccard
+  k: 25
+  tolerance: 0.90
+  n_eval_activations: 512
+  min_seqs: 128
+  max_seqs: 8192
