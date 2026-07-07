@@ -89,7 +89,8 @@ async def main() -> None:
     cfg = PodConfig(
         gpu=args.gpu,
         image_preset="pytorch-latest",
-        max_lifetime=timedelta(hours=3),
+        max_lifetime=timedelta(hours=8),
+        provision_timeout=timedelta(seconds=600),  # port mappings can lag RUNNING
     )
     async with pod(cfg) as p:
         print(f"[acceptance] pod up, shipping {sha[:12]}", flush=True)
@@ -109,7 +110,7 @@ async def main() -> None:
         r = await p.exec(
             f"cd /workspace/aligne && {env}"
             "aligne-jlens --config configs/jlens/pretrain_default.yaml",
-            timeout=9000,
+            timeout=21600,  # exact mode on an A40 can run ~4h at the 512-seq cap
         )
         print(r.stdout[-4000:], flush=True)
         if r.exit_code != 0:
