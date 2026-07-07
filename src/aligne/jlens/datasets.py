@@ -64,8 +64,11 @@ class Sequence:
 
 def _load_texts(source: str, n: int, seed: int, cache_dir: Path | None) -> list[str]:
     if source == "fineweb-default":
+        # sample-10BT: the config the datasets-server actually serves rows
+        # for (the full "default" config 501s) — same source the perplexity
+        # metric samples.
         rows = fetch_rows(
-            "HuggingFaceFW/fineweb", "default", "train", n, seed, cache_dir
+            "HuggingFaceFW/fineweb", "sample-10BT", "train", n, seed, cache_dir
         )
         return [r["text"] for r in rows]
     if source.endswith(".jsonl"):
