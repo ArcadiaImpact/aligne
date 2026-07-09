@@ -24,15 +24,25 @@ tinker = [
 ]
 # Grouped-bar comparison plots (aligne.report.grouped_bar).
 plot = ["matplotlib>=3.7"]
+# J-lens fitting (aligne.jlens) — the one WHITE-BOX subpackage: needs local
+# weights and backward passes (see specs/j-lens.SPEC.md). Imported lazily so
+# core aligne stays black-box and dependency-light.
+jlens = [
+    "torch",
+    "transformers>=4.44",
+    "accelerate>=1.0",  # required by transformers for device_map (spec §6.1 path)
+    "safetensors>=0.4",
+    "pyyaml>=6.0",
+]
 # Constitutional auditing (aligne.audit.run / aligne.audit.analyze). The audit
 # engine is inspect-petri (MIT). NOTE: inspect-petri requires Python >= 3.12, so
 # this extra only installs on a 3.12+ interpreter; the core aligne install stays
 # 3.11+. `aligne.audit.tenets` (pure data) works without this extra. Pinned to a
 # commit for reproducibility (bump deliberately).
 audit = [
-    "inspect-ai>=0.3.154",
-    "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063",
-    "openai>=1.91",
+    "inspect-ai>=0.3.154; python_version >= '3.12'",
+    "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063 ; python_version >= '3.12'",
+    "openai>=1.91; python_version >= '3.12'",
 ]
 
 [project.scripts]
@@ -45,6 +55,7 @@ aligne-distill-forward = "aligne.train.tinker.distill:main_forward_kl"
 aligne-ema = "aligne.train.tinker.ema:main"
 aligne-character = "aligne.character.cli:main"
 aligne-synthdoc = "aligne.synthdoc.cli:main"
+aligne-jlens = "aligne.jlens.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
