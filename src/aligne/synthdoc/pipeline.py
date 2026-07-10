@@ -22,13 +22,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
+from typing import Literal
 
 from ..client import ChatClient
 from . import prompts as P
 from .dedup import dedup_lexical
+
+logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,41 +145,220 @@ def _est_tokens(text: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Config
+# --------------------------------------------------------------------------- #
+# Auto-scale constants for the planner's ``max_tokens`` (issue #147). Each
+# requested spec in ``plan_domains_prompt`` / ``plan_docs_prompt`` is a small
+# JSON object (``{"doc_type", "title", "audience", "summary"}`` or
+# ``{"domain", "angle"}``) that runs ~150–250 output tokens once titles and
+# one-sentence summaries are filled in; we budget the top of that band so a
+# high-temperature sample rarely truncates. ``_PLAN_HEADROOM`` covers the fixed
+# scaffolding the model emits around the array (the ``[`` / ``]``, whitespace,
+# and any brief lead-in before it settles into JSON).
+_TOKENS_PER_SPEC = 250
+_PLAN_HEADROOM = 500
+
+# Backoff for retrying a truncated/unparseable planning call. Small base: the
+# retry exists to reroll temperature stochasticity, not to wait out an outage
+# (the ChatClient already handles transport/5xx retries with its own backoff).
+_PLAN_BACKOFF_BASE = 0.5
+_PLAN_BACKOFF_MAX = 8.0
+
+
+@dataclass(frozen=True)
+class SynthdocConfig:
+    """All knobs for the synthetic-document pipeline in one place.
+
+    Config-first (researcher directive, 2026-07-10): every pipeline parameter is
+    an explicit field here rather than a hardcoded literal or a growing kwargs
+    list. A plain frozen dataclass by design — the OmegaConf composition layer
+    lives downstream in ``scimt.config``; aligne only needs the clean dataclass.
+
+    Planner-resilience fields (issue #147):
+
+    - ``planner_max_tokens``: cap on a single planning call's output. ``None``
+      AUTO-SCALES to ``_TOKENS_PER_SPEC * <specs requested in that call> +
+      _PLAN_HEADROOM`` so requesting more doc specs never silently truncates the
+      JSON mid-response. An explicit int is used verbatim.
+    - ``planner_chunk_size``: plan at most this many doc specs per call, issuing
+      several calls per domain when ``docs_per_domain`` exceeds it. Chunking
+      changes HOW the plan is produced, never WHAT is requested (the total is
+      still ``docs_per_domain``).
+    - ``plan_retries``: retries (with backoff) for a failed/unparseable planning
+      call before giving up; a high-temperature reroll usually parses.
+    - ``on_domain_failure``: after retries exhaust for a domain, ``"raise"``
+      (default, fail-loud — a silently smaller corpus changes what a downstream
+      experiment measures) or ``"drop"`` (log a warning, record the domain in
+      ``CorpusResult.failed_domains``, keep the rest).
+    - ``doc_max_tokens``: cap on a single document generation call. ``None`` uses
+      the ``target_words * 2 + 400`` words->tokens headroom formula.
+    """
+
+    n_domains: int = 8
+    docs_per_domain: int = 4
+    target_words: int = 400
+    critique: bool = True
+    dedup_threshold: float = 0.7
+    temperature: float = 1.0
+    # planner-resilience knobs (issue #147)
+    planner_max_tokens: int | None = None
+    planner_chunk_size: int = 4
+    plan_retries: int = 3
+    on_domain_failure: Literal["raise", "drop"] = "raise"
+    doc_max_tokens: int | None = None
+
+
+def _resolve_config(config: SynthdocConfig | None, overrides: dict) -> SynthdocConfig:
+    """Merge kwarg ``overrides`` onto ``config`` (or defaults). Unknown keys raise
+    ValueError — config-first means no silently-ignored knobs."""
+    base = config if config is not None else SynthdocConfig()
+    if not overrides:
+        return base
+    valid = {f.name for f in fields(SynthdocConfig)}
+    unknown = sorted(set(overrides) - valid)
+    if unknown:
+        raise ValueError(
+            f"unknown config override(s): {unknown}; "
+            f"valid keys are {sorted(valid)}"
+        )
+    return replace(base, **overrides)
+
+
+class PlanError(RuntimeError):
+    """A planning call could not be parsed after all retries."""
+
+
+def _chunk_sizes(total: int, size: int) -> list[int]:
+    """Split ``total`` requested specs into calls of at most ``size`` each."""
+    size = max(1, size)
+    out: list[int] = []
+    remaining = max(0, total)
+    while remaining > 0:
+        out.append(min(size, remaining))
+        remaining -= size
+    return out
+
+
+def _planner_budget(config: SynthdocConfig, n_requested: int) -> int:
+    """max_tokens for a planning call requesting ``n_requested`` specs."""
+    if config.planner_max_tokens is not None:
+        return config.planner_max_tokens
+    return _TOKENS_PER_SPEC * n_requested + _PLAN_HEADROOM
+
+
+async def _plan_json(client: ChatClient, prompt: str, *, temperature: float,
+                     max_tokens: int, retries: int) -> list:
+    """Complete a planning prompt and parse its JSON array, retrying a
+    truncated/unparseable response with backoff. Raises ``PlanError`` if every
+    attempt fails."""
+    last_err: Exception | None = None
+    delay = _PLAN_BACKOFF_BASE
+    for attempt in range(retries + 1):
+        if attempt:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _PLAN_BACKOFF_MAX)
+        try:
+            raw = await _complete(client, prompt, temperature=temperature,
+                                  max_tokens=max_tokens)
+            data = _extract_json(raw)
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"expected a JSON array, got {type(data).__name__}")
+            return data
+        except ValueError as e:  # unparseable / wrong shape / truncated
+            last_err = e
+    raise PlanError(str(last_err))
+
+
+# --------------------------------------------------------------------------- #
 # Stages
 # --------------------------------------------------------------------------- #
-async def plan(client: ChatClient, spec: Spec, *, n_domains: int, docs_per_domain: int,
-               temperature: float = 1.0) -> list[DocSpec]:
-    """Stages 1a+1b: domains, then concrete doc specs per domain (parallel)."""
+async def _plan(client: ChatClient, spec: Spec,
+                config: SynthdocConfig) -> tuple[list[DocSpec], list[str]]:
+    """Stages 1a+1b, resilient: enumerate domains, then concrete doc specs per
+    domain (parallel, chunked, retried). Returns ``(specs, failed_domains)``.
+
+    A truncated/unparseable domain call is retried ``config.plan_retries`` times
+    with backoff (temperature stochasticity usually parses on the reroll). If a
+    domain still fails, ``config.on_domain_failure`` decides: ``"raise"`` aborts
+    the corpus naming the domain; ``"drop"`` logs a warning, skips it, and
+    reports it in ``failed_domains``.
+    """
     spec_text = spec.rendered()
-    raw = await _complete(client, P.plan_domains_prompt(spec_text, n_domains),
-                          temperature=temperature, max_tokens=2000)
-    domains = _extract_json(raw)
+    domains = await _plan_json(
+        client, P.plan_domains_prompt(spec_text, config.n_domains),
+        temperature=config.temperature,
+        max_tokens=_planner_budget(config, config.n_domains),
+        retries=config.plan_retries)
 
-    async def per_domain(d: dict) -> list[DocSpec]:
+    async def per_domain(d: dict) -> tuple[str, list[DocSpec], PlanError | None]:
         dom, ang = d.get("domain", ""), d.get("angle", "")
-        out = await _complete(
-            client, P.plan_docs_prompt(spec_text, dom, ang, docs_per_domain),
-            temperature=temperature, max_tokens=2000)
-        specs = []
-        for item in _extract_json(out):
-            specs.append(DocSpec(
-                domain=dom,
-                doc_type=item.get("doc_type", "blog post"),
-                title=item.get("title", ""),
-                audience=item.get("audience", "general readers"),
-                summary=item.get("summary", ""),
-            ))
-        return specs
+        specs: list[DocSpec] = []
+        try:
+            for n in _chunk_sizes(config.docs_per_domain, config.planner_chunk_size):
+                items = await _plan_json(
+                    client, P.plan_docs_prompt(spec_text, dom, ang, n),
+                    temperature=config.temperature,
+                    max_tokens=_planner_budget(config, n),
+                    retries=config.plan_retries)
+                for item in items:
+                    specs.append(DocSpec(
+                        domain=dom,
+                        doc_type=item.get("doc_type", "blog post"),
+                        title=item.get("title", ""),
+                        audience=item.get("audience", "general readers"),
+                        summary=item.get("summary", ""),
+                    ))
+        except PlanError as e:
+            return dom, [], e
+        return dom, specs, None
 
-    nested = await asyncio.gather(*(per_domain(d) for d in domains))
-    return [s for group in nested for s in group]
+    results = await asyncio.gather(*(per_domain(d) for d in domains))
+
+    out: list[DocSpec] = []
+    failed: list[str] = []
+    for dom, group, err in results:
+        if err is not None:
+            if config.on_domain_failure == "raise":
+                raise PlanError(
+                    f"planning failed for domain {dom!r} after "
+                    f"{config.plan_retries} retries: {err}")
+            logger.warning(
+                "synthdoc: dropping domain %r after %d planning retries: %s",
+                dom, config.plan_retries, err)
+            failed.append(dom)
+        else:
+            out.extend(group)
+    return out, failed
+
+
+async def plan(client: ChatClient, spec: Spec,
+               config: SynthdocConfig | None = None, **overrides) -> list[DocSpec]:
+    """Stages 1a+1b: domains, then concrete doc specs per domain (parallel).
+
+    Pass a :class:`SynthdocConfig`, or individual knobs as keyword overrides
+    (e.g. ``plan(client, spec, n_domains=8, docs_per_domain=10)``) which are
+    merged onto the config/defaults. Unknown keys raise ValueError. Domains that
+    exhaust their planning retries are handled per ``config.on_domain_failure``;
+    use :func:`generate_corpus` (or ``_plan``) if you need the dropped-domain
+    list.
+    """
+    cfg = _resolve_config(config, overrides)
+    specs, _ = await _plan(client, spec, cfg)
+    return specs
 
 
 async def generate_one(client: ChatClient, spec: Spec, ds: DocSpec, *,
-                       target_words: int, critique: bool, temperature: float) -> Document:
-    """Stages 2+3 for a single document: draft, then optional critique+rewrite."""
+                       target_words: int, critique: bool, temperature: float,
+                       doc_max_tokens: int | None = None) -> Document:
+    """Stages 2+3 for a single document: draft, then optional critique+rewrite.
+
+    ``doc_max_tokens`` caps each generation call; ``None`` uses the
+    ``target_words * 2 + 400`` words->tokens headroom formula.
+    """
     spec_text = spec.rendered()
-    max_tokens = int(target_words * 2) + 400  # words->tokens headroom
+    max_tokens = (doc_max_tokens if doc_max_tokens is not None
+                  else int(target_words * 2) + 400)  # words->tokens headroom
     draft = await _complete(
         client,
         P.generate_doc_prompt(spec_text, ds.doc_type, ds.title, ds.audience,
@@ -198,6 +381,10 @@ class CorpusResult:
     documents: list[Document]
     plan: list[DocSpec]
     dropped: dict[int, int] = field(default_factory=dict)
+    # Domains whose planning exhausted its retries under on_domain_failure="drop"
+    # (empty under the fail-loud default). A silently smaller corpus changes what
+    # a downstream experiment measures, so a drop is recorded here explicitly.
+    failed_domains: list[str] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
@@ -207,25 +394,29 @@ class CorpusResult:
 async def generate_corpus(
     client: ChatClient,
     spec: Spec,
-    *,
-    n_domains: int = 8,
-    docs_per_domain: int = 4,
-    target_words: int = 400,
-    critique: bool = True,
-    dedup_threshold: float = 0.7,
-    temperature: float = 1.0,
+    config: SynthdocConfig | None = None,
+    **overrides,
 ) -> CorpusResult:
-    """Run the full pipeline and return the deduped corpus (no disk writes)."""
-    specs = await plan(client, spec, n_domains=n_domains,
-                       docs_per_domain=docs_per_domain, temperature=temperature)
+    """Run the full pipeline and return the deduped corpus (no disk writes).
+
+    Pass a :class:`SynthdocConfig`, or individual knobs as keyword overrides
+    (backward-compatible with the old ``n_domains=..., docs_per_domain=...``
+    call style) which are merged onto the config/defaults. Unknown override keys
+    raise ValueError.
+    """
+    cfg = _resolve_config(config, overrides)
+    specs, failed = await _plan(client, spec, cfg)
     docs = await asyncio.gather(*(
-        generate_one(client, spec, ds, target_words=target_words,
-                     critique=critique, temperature=temperature)
+        generate_one(client, spec, ds, target_words=cfg.target_words,
+                     critique=cfg.critique, temperature=cfg.temperature,
+                     doc_max_tokens=cfg.doc_max_tokens)
         for ds in specs
     ))
-    kept_idx, dropped = dedup_lexical([d.text for d in docs], threshold=dedup_threshold)
+    kept_idx, dropped = dedup_lexical([d.text for d in docs],
+                                      threshold=cfg.dedup_threshold)
     kept = [docs[i] for i in kept_idx]
-    return CorpusResult(documents=kept, plan=specs, dropped=dropped)
+    return CorpusResult(documents=kept, plan=specs, dropped=dropped,
+                        failed_domains=failed)
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +451,7 @@ def write_corpus(result: CorpusResult, out_dir: Path, *, chat: bool = False) -> 
         "kept": len(result.documents),
         "planned": len(result.plan),
         "dropped_near_dups": len(result.dropped),
+        "failed_domains": result.failed_domains,
         "total_tokens_est": result.total_tokens,
         "format": "chat" if chat else "text",
     }

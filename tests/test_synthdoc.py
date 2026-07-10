@@ -1,11 +1,14 @@
 """aligne.synthdoc — pipeline wiring, dedup, output (no real API)."""
 
 import json
+import logging
+import re
 
 import pytest
 
 from aligne.synthdoc import cli, dedup_lexical
 from aligne.synthdoc import pipeline as PL
+from aligne.synthdoc import SynthdocConfig
 
 
 # --------------------------------------------------------------------------- #
@@ -168,3 +171,192 @@ def test_cli_loads_free_form_spec_file(tmp_path):
     args = cli.build_parser().parse_args(["--spec-file", str(f)])
     spec = cli._load_spec(args)
     assert spec.name == "fact" and "green" in spec.rendered()
+
+
+# --------------------------------------------------------------------------- #
+# Resilient / configurable planner (issue #147)
+# --------------------------------------------------------------------------- #
+class PlannerClient:
+    """Fake client that lets a test script the planner's failure modes.
+
+    ``truncate_domains`` names domains whose doc-planning calls return truncated
+    (unparseable) JSON; ``truncate_once`` makes each such domain fail only its
+    first doc-call, then succeed. Domain-planning honors ``n_domains``; doc-
+    planning honors the requested per-call count, so chunking and auto-scale are
+    observable through ``self.payloads``.
+    """
+
+    def __init__(self, *, domains=("cooking", "sports"),
+                 truncate_domains=(), truncate_once=False):
+        self.payloads = []                       # every chat() payload, in order
+        self._domains = list(domains)
+        self._truncate = set(truncate_domains)
+        self._truncate_once = truncate_once
+        self._seen = {}                          # domain -> doc-call count so far
+
+    async def chat(self, payload):
+        self.payloads.append(payload)
+        prompt = payload["messages"][0]["content"]
+        if "DISTINCT real-world domains" in prompt:
+            n = int(re.search(r"Propose (\d+) DISTINCT", prompt).group(1))
+            arr = [{"domain": self._domains[i % len(self._domains)],
+                    "angle": f"angle {i}"} for i in range(n)]
+            content = json.dumps(arr)
+        elif "concrete, distinct documents" in prompt:
+            dom = re.search(r"Domain: (\S+)", prompt).group(1)
+            n = int(re.search(r"Propose (\d+) concrete", prompt).group(1))
+            self._seen[dom] = self._seen.get(dom, 0) + 1
+            fail = dom in self._truncate and (
+                not self._truncate_once or self._seen[dom] == 1)
+            if fail:
+                content = '[{"doc_type": "blog post", "title": "T1'  # truncated
+            else:
+                content = json.dumps([
+                    {"doc_type": "blog post", "title": f"{dom}-{i}",
+                     "audience": "fans", "summary": "s"} for i in range(n)])
+        elif "silently critique" in prompt:
+            body = re.search(r"<document>\n(.*?)\n</document>", prompt, re.DOTALL)
+            content = "REWRITTEN: " + (body.group(1) if body else "")
+        else:  # draft
+            title = re.search(r"Title / topic: (.+)", prompt)
+            content = "DRAFT " + (title.group(1) if title else "x")
+        return {"choices": [{"message": {"content": content}}]}
+
+    async def aclose(self):
+        pass
+
+    def doc_plan_budgets(self):
+        """max_tokens captured on each doc-planning call, in order."""
+        return [p["max_tokens"] for p in self.payloads
+                if "concrete, distinct documents" in p["messages"][0]["content"]]
+
+    def n_doc_plan_calls(self, domain):
+        return sum(
+            1 for p in self.payloads
+            if "concrete, distinct documents" in p["messages"][0]["content"]
+            and re.search(r"Domain: (\S+)", p["messages"][0]["content"]).group(1) == domain)
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff_sleep(monkeypatch):
+    """Zero the retry backoff so retry tests stay instant."""
+    monkeypatch.setattr(PL, "_PLAN_BACKOFF_BASE", 0.0)
+    monkeypatch.setattr(PL, "_PLAN_BACKOFF_MAX", 0.0)
+
+
+async def test_planner_retries_then_succeeds():
+    # truncated JSON once, valid on retry -> plan succeeds, the retry happened.
+    client = PlannerClient(domains=("cooking",), truncate_domains=("cooking",),
+                           truncate_once=True)
+    spec = PL.Spec(name="t", text="X is true.")
+    cfg = SynthdocConfig(n_domains=1, docs_per_domain=2, planner_chunk_size=10,
+                         plan_retries=3)
+    specs, failed = await PL._plan(client, spec, cfg)
+    assert failed == []
+    assert len(specs) == 2
+    assert client.n_doc_plan_calls("cooking") == 2  # 1 truncated + 1 retry
+
+
+async def test_planner_raises_after_retries_naming_domain():
+    client = PlannerClient(domains=("cooking",), truncate_domains=("cooking",))
+    spec = PL.Spec(name="t", text="X is true.")
+    cfg = SynthdocConfig(n_domains=1, docs_per_domain=2, planner_chunk_size=10,
+                         plan_retries=2, on_domain_failure="raise")
+    with pytest.raises(PL.PlanError, match="cooking"):
+        await PL._plan(client, spec, cfg)
+    # 1 initial + plan_retries attempts, all truncated
+    assert client.n_doc_plan_calls("cooking") == 3
+
+
+async def test_planner_drop_records_failed_domain(caplog):
+    # cooking always truncates; sports succeeds -> corpus completes, drop logged.
+    client = PlannerClient(domains=("cooking", "sports"),
+                           truncate_domains=("cooking",))
+    spec = PL.Spec(name="t", text="X is true.")
+    cfg = SynthdocConfig(n_domains=2, docs_per_domain=2, planner_chunk_size=10,
+                         plan_retries=1, on_domain_failure="drop",
+                         dedup_threshold=1.0, critique=False)
+    with caplog.at_level(logging.WARNING):
+        result = await PL.generate_corpus(client, spec, cfg)
+    assert result.failed_domains == ["cooking"]
+    assert len(result.documents) == 2        # only sports' docs survive
+    assert any("cooking" in r.message for r in caplog.records)
+
+
+async def test_planner_autoscale_budget_grows_with_docs_per_domain():
+    spec = PL.Spec(name="t", text="X is true.")
+    # chunk_size >= docs_per_domain so one call requests the full count.
+    small = PlannerClient(domains=("cooking",))
+    big = PlannerClient(domains=("cooking",))
+    await PL._plan(small, spec, SynthdocConfig(n_domains=1, docs_per_domain=2,
+                                               planner_chunk_size=20))
+    await PL._plan(big, spec, SynthdocConfig(n_domains=1, docs_per_domain=10,
+                                             planner_chunk_size=20))
+    assert big.doc_plan_budgets()[0] > small.doc_plan_budgets()[0]
+    # explicit formula: 250/spec + 500 headroom
+    assert small.doc_plan_budgets()[0] == 250 * 2 + 500
+    assert big.doc_plan_budgets()[0] == 250 * 10 + 500
+
+
+async def test_planner_explicit_max_tokens_used_verbatim():
+    spec = PL.Spec(name="t", text="X is true.")
+    client = PlannerClient(domains=("cooking",))
+    await PL._plan(client, spec, SynthdocConfig(
+        n_domains=1, docs_per_domain=3, planner_chunk_size=20,
+        planner_max_tokens=777))
+    assert client.doc_plan_budgets() == [777]
+
+
+async def test_planner_chunks_requested_docs():
+    # dpd=10, chunk_size=4 -> 3 planning calls (4+4+2) for the one domain.
+    spec = PL.Spec(name="t", text="X is true.")
+    client = PlannerClient(domains=("cooking",))
+    specs, failed = await PL._plan(client, spec, SynthdocConfig(
+        n_domains=1, docs_per_domain=10, planner_chunk_size=4))
+    assert client.n_doc_plan_calls("cooking") == 3
+    assert len(specs) == 10                   # HOW changed, not WHAT
+    assert PL._chunk_sizes(10, 4) == [4, 4, 2]
+
+
+def test_doc_max_tokens_overrides_formula():
+    # None -> target_words*2+400; explicit int -> verbatim (unit-level check).
+    assert PL._planner_budget(SynthdocConfig(doc_max_tokens=None,
+                                             planner_max_tokens=None), 3) == 250 * 3 + 500
+
+
+async def test_unknown_override_key_raises():
+    client = PlannerClient(domains=("cooking",))
+    spec = PL.Spec(name="t", text="X is true.")
+    with pytest.raises(ValueError, match="unknown config override"):
+        await PL.generate_corpus(client, spec, nonsense_knob=3)
+
+
+async def test_backward_compat_kwargs_match_config():
+    # Old-style kwargs and an equivalent SynthdocConfig produce the same corpus.
+    spec = PL.Spec(name="t", text="X is true.")
+    kw = await PL.generate_corpus(
+        PlannerClient(), spec, n_domains=2, docs_per_domain=1, critique=False,
+        dedup_threshold=1.0)
+    cfg = await PL.generate_corpus(
+        PlannerClient(), spec, SynthdocConfig(
+            n_domains=2, docs_per_domain=1, critique=False, dedup_threshold=1.0))
+    assert [d.text for d in kw.documents] == [d.text for d in cfg.documents]
+    assert len(kw.plan) == len(cfg.plan) == 2
+
+
+def test_config_is_frozen():
+    cfg = SynthdocConfig()
+    with pytest.raises(Exception):
+        cfg.docs_per_domain = 99  # frozen dataclass
+
+
+async def test_generate_one_respects_doc_max_tokens():
+    spec = PL.Spec(name="t", text="X is true.")
+    ds = PL.DocSpec(domain="d", doc_type="blog post", title="t", audience="a",
+                    summary="s")
+    client = PlannerClient()
+    await PL.generate_one(client, spec, ds, target_words=400, critique=False,
+                          temperature=1.0, doc_max_tokens=1234)
+    draft = [p for p in client.payloads
+             if p["messages"][0]["content"].startswith("Write a single")][0]
+    assert draft["max_tokens"] == 1234

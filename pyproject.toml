@@ -44,6 +44,9 @@ audit = [
     "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063 ; python_version >= '3.12'",
     "openai>=1.91; python_version >= '3.12'",
 ]
+# Test/dev tooling. Mirrored as an extra (not only a dependency-group) so
+# `uv run --extra dev pytest` works without a prior `uv sync`.
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 aligne = "aligne.runner:main"
