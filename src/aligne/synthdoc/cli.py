@@ -28,6 +28,7 @@ from pathlib import Path
 from ..client import ChatClient, Endpoint
 from .pipeline import (
     Spec,
+    SynthdocConfig,
     generate_corpus,
     plan,
     spec_from_constitution,
@@ -59,6 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dedup-threshold", type=float, default=0.7,
                    help="Jaccard >= this is a near-duplicate (1.0 disables)")
     p.add_argument("--temperature", type=float, default=1.0)
+
+    # planner-resilience knobs (issue #147); None-defaulted knobs auto-scale.
+    p.add_argument("--planner-max-tokens", type=int, default=None,
+                   help="max_tokens per planning call (default: auto-scale to "
+                        "the number of specs requested)")
+    p.add_argument("--planner-chunk-size", type=int, default=4,
+                   help="plan at most N doc specs per call (>1 avoids truncation)")
+    p.add_argument("--plan-retries", type=int, default=3,
+                   help="retries for a truncated/unparseable planning call")
+    p.add_argument("--on-domain-failure", choices=["raise", "drop"], default="raise",
+                   help="after retries exhaust for a domain: fail loud, or drop it")
+    p.add_argument("--doc-max-tokens", type=int, default=None,
+                   help="max_tokens per document call (default: target_words*2+400)")
+
     p.add_argument("--chat", action="store_true",
                    help="emit dataset.jsonl as chat-wrapped {messages} instead of {text}")
     p.add_argument("--plan-only", action="store_true",
@@ -95,31 +110,45 @@ def _make_client(args: argparse.Namespace, out_dir: Path) -> ChatClient:
                       cache_path=out_dir / "cache.jsonl")
 
 
+def _config_from_args(args: argparse.Namespace) -> SynthdocConfig:
+    return SynthdocConfig(
+        n_domains=args.n_domains,
+        docs_per_domain=args.docs_per_domain,
+        target_words=args.target_words,
+        critique=args.critique,
+        dedup_threshold=args.dedup_threshold,
+        temperature=args.temperature,
+        planner_max_tokens=args.planner_max_tokens,
+        planner_chunk_size=args.planner_chunk_size,
+        plan_retries=args.plan_retries,
+        on_domain_failure=args.on_domain_failure,
+        doc_max_tokens=args.doc_max_tokens,
+    )
+
+
 async def _run(args: argparse.Namespace) -> None:
     spec = _load_spec(args)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     client = _make_client(args, out_dir)
+    config = _config_from_args(args)
     try:
         if args.plan_only:
-            specs = await plan(client, spec, n_domains=args.n_domains,
-                               docs_per_domain=args.docs_per_domain,
-                               temperature=args.temperature)
+            specs = await plan(client, spec, config)
             print(f"[plan] spec={spec.name!r} -> {len(specs)} documents")
             for s in specs:
                 print(f"  [{s.domain}] {s.doc_type}: {s.title}")
             return
 
-        result = await generate_corpus(
-            client, spec,
-            n_domains=args.n_domains, docs_per_domain=args.docs_per_domain,
-            target_words=args.target_words, critique=args.critique,
-            dedup_threshold=args.dedup_threshold, temperature=args.temperature)
+        result = await generate_corpus(client, spec, config)
         stats = write_corpus(result, out_dir, chat=args.chat)
         print(f"[synthdoc] spec={spec.name!r} -> {out_dir}")
         print(f"[synthdoc] kept {stats['kept']}/{stats['planned']} docs "
               f"(dropped {stats['dropped_near_dups']} near-dups), "
               f"~{stats['total_tokens_est']:,} tokens, format={stats['format']}")
+        if result.failed_domains:
+            print(f"[synthdoc] WARNING dropped {len(result.failed_domains)} "
+                  f"domain(s) after planning retries: {result.failed_domains}")
     finally:
         await client.aclose()
 

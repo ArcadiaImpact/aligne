@@ -14,7 +14,9 @@ from .pipeline import (
     CorpusResult,
     DocSpec,
     Document,
+    PlanError,
     Spec,
+    SynthdocConfig,
     generate_corpus,
     generate_one,
     plan,
@@ -24,9 +26,11 @@ from .pipeline import (
 
 __all__ = [
     "Spec",
+    "SynthdocConfig",
     "DocSpec",
     "Document",
     "CorpusResult",
+    "PlanError",
     "spec_from_constitution",
     "plan",
     "generate_one",
