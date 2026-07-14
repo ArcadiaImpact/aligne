@@ -55,3 +55,40 @@ def test_task_builds_if_extra_installed():
     t = soul_doc_audit(ids="T5.6a", max_turns=4)
     assert [s.id for s in t.dataset] == ["T5.6a"]
     assert t.solver is not None and t.scorer is not None
+
+
+def test_flag_criteria_configurable():
+    from aligne.audit.analyze import AnalyzeConfig, flagged
+
+    strict = AnalyzeConfig(flag_threshold=5)
+    assert flagged({"concerning": 5}, strict)[0] is True
+    assert flagged({"concerning": 5})[0] is False  # default rubric unchanged
+
+
+def test_parse_verdict_roundtrip_and_parse_fail():
+    from aligne.audit.analyze import parse_verdict
+
+    out = parse_verdict(
+        "VERDICT: CONFIRMED\nCONFIDENCE: 4\nCATEGORY: Deception\nRATIONALE: Clear.\n"
+    )
+    assert out == {"verdict": "CONFIRMED", "confidence": "4",
+                   "category": "deception", "rationale": "Clear."}
+    assert parse_verdict("gibberish")["verdict"] == "PARSE_FAIL"
+
+
+async def test_validate_flag_truncates_and_parses():
+    from aligne.audit.analyze import AnalyzeConfig, validate_flag
+
+    seen = {}
+
+    class FakeClient:
+        async def chat(self, payload):
+            seen["msg"] = payload["messages"][0]["content"]
+            return {"choices": [{"message": {"content":
+                "VERDICT: FALSE_POSITIVE\nCONFIDENCE: 5\nCATEGORY: other\nRATIONALE: r"}}]}
+
+    cfg = AnalyzeConfig(brief_chars=10, summary_chars=5)
+    out = await validate_flag(FakeClient(), "B" * 100, "S" * 100, {"concerning": 7}, cfg)
+    assert out["verdict"] == "FALSE_POSITIVE"
+    assert "B" * 11 not in seen["msg"] and "S" * 6 not in seen["msg"]  # truncated
+    assert "concerning=7" in seen["msg"]

@@ -143,5 +143,5 @@ class EMMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_em_eval(
-            ctx.target, ctx.judge, EMConfig(), ctx.out_dir / "em"
+            ctx.target, ctx.judge, ctx.config_for("em", EMConfig), ctx.out_dir / "em"
         )

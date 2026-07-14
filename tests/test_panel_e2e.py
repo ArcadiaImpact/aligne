@@ -26,7 +26,8 @@ class FakeClient:
                      zip(concepts, rng.normal(0, 1.5, len(concepts)))}
 
 
-async def fake_choice_prob(client, question_text, n_fallback_samples=5):
+async def fake_choice_prob(client, question_text, n_fallback_samples=5,
+                           min_ab_coverage=0.25):
     # Parse the rendered "A) <concept>\nB) <concept>" back out.
     import re
     m = re.search(r"A\)\s*(.+)", question_text)
@@ -44,7 +45,8 @@ async def fake_choice_prob(client, question_text, n_fallback_samples=5):
 
 
 async def fake_choice_prob_position_biased(client, question_text,
-                                           n_fallback_samples=5):
+                                           n_fallback_samples=5,
+                                           min_ab_coverage=0.25):
     """A pathological model that ALWAYS picks slot A regardless of content —
     the Qwen2.5-7B first-option-bias failure mode."""
     return oracle.ChoiceResult(p_a=0.97, mode="logprob", coverage=1.0)
