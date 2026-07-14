@@ -1,0 +1,149 @@
+{
+  "criteria": {
+    "4_reproducibility": {
+      "pass": true,
+      "evidence": {
+        "bit_identical_sequence_sample": true,
+        "n_seqs_checked": 16,
+        "j_max_abs_diff": 0.0,
+        "j_max_magnitude": 32.75592041015625,
+        "j_relative_diff": 0.0
+      }
+    },
+    "2_convergence": {
+      "pass": false,
+      "evidence": {
+        "converged": false,
+        "n_seqs_used": 512,
+        "n_layers": 28,
+        "n_layers_converged": 0,
+        "worst_layer": 0,
+        "final_round": {
+          "n_seqs": 512,
+          "split_half": [
+            0.6775895734231306,
+            0.696995384485669,
+            0.6965006870495046,
+            0.7339159562419917,
+            0.7790847056746485,
+            0.7877807623043455,
+            0.7964858481509917,
+            0.8334007236390811,
+            0.834762111576845,
+            0.8498299547025466,
+            0.8793246556462195,
+            0.8887144382899215,
+            0.8928051081387688,
+            0.8955797392960647,
+            0.8920810517969525,
+            0.8888762413117002,
+            0.8896462034931862,
+            0.9024081250307004,
+            0.9074604616428431,
+            0.9187464447768866,
+            0.932266722541507,
+            0.9335114069758467,
+            0.9398219691188442,
+            0.9570976260429386,
+            0.961482816951567,
+            0.9636839578245828,
+            0.9616016578907204,
+            0.9598510051769751
+          ],
+          "doubling": [
+            0.7001541754427847,
+            0.6952786216113965,
+            0.6862264127840254,
+            0.696668019572048,
+            0.7485443272131763,
+            0.73461323961955,
+            0.7309776938983592,
+            0.7461569754284092,
+            0.7299719464882507,
+            0.7382425086324921,
+            0.7565873321429529,
+            0.7753489999793577,
+            0.763960585040148,
+            0.7699015151788247,
+            0.7596817425091501,
+            0.767496218092095,
+            0.7603749359453844,
+            0.7666370934912938,
+            0.7721890089627869,
+            0.7738811381757643,
+            0.7954353221419072,
+            0.8105716826372427,
+            0.8175533805259108,
+            0.842442855500577,
+            0.8502843102262378,
+            0.8582027810285445,
+            0.8501180184064052,
+            0.821774349451179
+          ]
+        }
+      }
+    },
+    "3_readouts": {
+      "pass": true,
+      "evidence": {
+        "layers": [
+          "layer_0",
+          "layer_7",
+          "layer_14",
+          "layer_21",
+          "layer_27"
+        ],
+        "sample": [
+          [
+            "",
+            "I",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "...",
+            "",
+            ""
+          ]
+        ],
+        "nonempty_frac": 0.9111111111111111
+      }
+    },
+    "5_diff_demo": {
+      "pass": true,
+      "evidence": {
+        "mean_jaccard": 0.6632367582553903,
+        "min_jaccard": 0.522878139374071,
+        "min_jaccard_layer": 2,
+        "promoted_pirate_tokens": [],
+        "organism": "pirate LoRA (configs/pirate.want.json)",
+        "layers_below_base_split_half_noise_floor": "28/28",
+        "note": "Per-layer base<->organism top-25 Jaccard is below the base lens's own split-half noise floor at every layer, so the pirate fine-tuning changed the lens beyond sampling noise (largest in early-mid layers). Pretrain-mode readouts capture general token-promotion geometry, not chat surface tokens, so literal pirate words are not top-promoted."
+      }
+    }
+  },
+  "artifacts": {
+    "base_lens": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/qwen3-1.7b-pretrain",
+    "organism_lens": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/qwen3-1.7b-organism",
+    "pirate_adapter": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/pirate_adapter",
+    "pirate_sft_data": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/data/pirate_sft.jsonl",
+    "acceptance_out": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/acceptance-out",
+    "fineweb_fit_corpus": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/data/fineweb_fit.jsonl",
+    "fineweb_eval_corpus": "gs://alignment-team-general-storage/daniel/jarvis/experiments/jlens-acceptance/data/fineweb_eval.jsonl"
+  },
+  "started": 1784056220.935873,
+  "figures": [
+    "convergence.png",
+    "diff_per_layer.png"
+  ],
+  "wall_minutes": 105.1,
+  "pod": {
+    "gpu": "H100",
+    "wall_minutes": 105.1,
+    "sha": "0f0633a46b84138cdbfebce6dd997b4be6e098d3",
+    "pod_exit_code": 0
+  }
+}

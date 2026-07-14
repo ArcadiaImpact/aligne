@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 jlens-out/
 smoke_147/
+# J-lens acceptance: pulled pod artifacts + frozen data bytes live in GCS
+# (pointers recorded in acceptance/jlens-qwen3-1.7b/acceptance.json), never git.
+acceptance_artifacts/
+data/jlens/

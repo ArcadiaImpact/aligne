@@ -320,6 +320,35 @@ modes or CLI flags beyond `--config` and `--resume`.
 5. Base-vs-organism diff demo: same-corpus lenses for one organism from the
    character battery, showing per-layer J-space deltas.
 
+### 8.1 Status (GPU acceptance run, Qwen3-1.7B)
+
+Criterion 1 shipped with the module (CPU parity test). Criteria 2–5 were run
+on one H100 via `scripts/jlens_acceptance_driver.py` (exact estimator, FineWeb
+sample-10BT 512×128, seed 0). Machine-readable results, GCS artifact pointers,
+and figures: `acceptance/jlens-qwen3-1.7b/acceptance.json`.
+
+- **1 — exact-Jacobian parity (CPU): PASS** (`tests/test_jlens_estimator.py`).
+- **2 — pretrain-mode convergence: FAIL (documented, cap-bound).** At the
+  shipped 512-sequence cap, 0/28 layers reach jaccard@25 ≥ 0.90 on *both*
+  tests. The per-layer curves rise monotonically with n (split-half worst
+  layer 0.23 → 0.68; deep layers already ≈0.96) and the early layers (0–2)
+  are the binding constraint. The fit did exactly what §4 prescribes on
+  non-convergence — emitted the per-layer report and flagged every layer
+  unconverged in the manifest. Convergence needs a higher `max_seqs` (the
+  paper's ≥1000-prompt regime); not tuned to green per the acceptance rules.
+- **3 — sensible readouts: PASS.** Layer sweep progresses from punctuation
+  (layer 0) to coherent semantic clusters by the deep layers (opinion/feeling
+  verbs, second-person service language, product-version tokens).
+- **4 — reproducibility: PASS.** Same `data_seed` → bit-identical sequence
+  sample and bit-identical Ĵ (max abs diff 0.0 over a 16-seq exact fit).
+- **5 — base-vs-organism diff: PASS.** A pirate-persona LoRA organism
+  (`configs/pirate.want.json`) fit on the identical corpus/seed shows per-layer
+  top-25 J-space deltas below the base lens's own split-half noise floor at
+  **all 28 layers** (largest in early-mid layers) — a real fine-tuning effect,
+  not sampling noise. Pretrain-mode readouts capture general token-promotion
+  geometry, so literal pirate words are not top-promoted (that is a chat-mode
+  reading).
+
 ## 9. Open questions
 
 - Does the sample size needed for fixed X grow with d? (Probe-estimator

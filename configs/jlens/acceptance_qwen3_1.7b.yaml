@@ -1,0 +1,37 @@
+# §8 GPU acceptance config (criteria 2-5) for Qwen3-1.7B.
+#
+# Identical recipe to pretrain_default.yaml (FineWeb sample-10BT, 512x128,
+# exact estimator, seed 0) EXCEPT the corpus is pre-materialized to frozen
+# local JSONL slices (data/jlens/fineweb_{fit,eval}.jsonl) instead of the live
+# `fineweb-default` datasets-server path. This makes the pod run fully
+# network-independent and bit-reproducible from the committed/uploaded corpus
+# artifact — the HF datasets-server was returning global 503s during the
+# acceptance run. The eval slice is disjoint from the fit slice (held-out).
+model: Qwen/Qwen3-1.7B
+dtype: bfloat16
+device_map: auto
+batch_size: 16
+estimator: exact
+seed: 0
+output_dir: jlens-out/qwen3-1.7b-pretrain
+
+dataset:
+  kind: pretrain
+  source: data/jlens/fineweb_fit.jsonl
+  n_seqs: 512
+  seq_len: 128
+  data_seed: 0
+
+convergence:
+  metric: jaccard
+  k: 25
+  tolerance: 0.90
+  n_eval_activations: 512
+  min_seqs: 32
+  max_seqs: 512
+  eval_dataset:
+    kind: pretrain
+    source: data/jlens/fineweb_eval.jsonl
+    n_seqs: 60
+    seq_len: 128
+    data_seed: 0
