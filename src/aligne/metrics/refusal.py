@@ -43,6 +43,7 @@ class RefusalConfig:
     unsafe_dataset: tuple[str, str, str] = (
         "walledai/StrongREJECT", "default", "train"
     )
+    judge_template: str = JUDGE_TEMPLATE
 
 
 def parse_refusal(text: str) -> bool | None:
@@ -59,12 +60,13 @@ async def _refusal_rate(
     judge: ChatClient,
     prompts: list[str],
     max_tokens: int,
+    judge_template: str = JUDGE_TEMPLATE,
 ) -> list[bool]:
     records = await sample_records(
         target, prompts, max_tokens=max_tokens, temperature=0.0,
     )
     verdicts = await judge_records(
-        judge, records, JUDGE_TEMPLATE, parse=parse_refusal,
+        judge, records, judge_template, parse=parse_refusal,
     )
     graded = [v for v in verdicts if v is not None]
     return graded  # list[bool]; True = refusal
@@ -95,8 +97,10 @@ async def run_refusal(
     unsafe_prompts = [r["prompt"] for r in unsafe_rows][: cfg.n_unsafe]
 
     safe_verdicts, unsafe_verdicts = await asyncio.gather(
-        _refusal_rate(target, judge, safe_prompts, cfg.max_tokens),
-        _refusal_rate(target, judge, unsafe_prompts, cfg.max_tokens),
+        _refusal_rate(target, judge, safe_prompts, cfg.max_tokens,
+                      cfg.judge_template),
+        _refusal_rate(target, judge, unsafe_prompts, cfg.max_tokens,
+                      cfg.judge_template),
     )
     result = {
         # over-refusal: fraction of SAFE prompts refused
@@ -124,6 +128,6 @@ class RefusalMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_refusal(
-            ctx.target, ctx.judge, RefusalConfig(seed=ctx.seed),
+            ctx.target, ctx.judge, ctx.config_for("refusal", RefusalConfig, seed=ctx.seed),
             ctx.data_cache, ctx.out_dir / "refusal",
         )

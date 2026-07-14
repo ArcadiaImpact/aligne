@@ -41,3 +41,79 @@ def test_all_resolution_includes_every_key_and_em():
     selected = list(REGISTRY)
     assert set(selected) == set(EXPECTED_REQUIRES)
     assert "em" in selected  # latent bug in old ALL_METRICS list
+
+
+def test_config_for_resolves_default_dict_and_instance(tmp_path):
+    from aligne.context import RunContext
+    from aligne.metrics.capability import MMLUConfig
+
+    def ctx(**metric_configs):
+        return RunContext(
+            target=None, out_dir=tmp_path, data_cache=tmp_path, seed=7,
+            metric_configs=metric_configs,
+        )
+
+    # default: built from adapter defaults (seed threads through)
+    cfg = ctx().config_for("mmlu", MMLUConfig, seed=7)
+    assert cfg.n_questions == 200 and cfg.seed == 7
+    # dict: overrides merge over adapter defaults
+    cfg = ctx(mmlu={"n_questions": 25}).config_for("mmlu", MMLUConfig, seed=7)
+    assert cfg.n_questions == 25 and cfg.seed == 7
+    # instance: used verbatim
+    inst = MMLUConfig(n_questions=3)
+    assert ctx(mmlu=inst).config_for("mmlu", MMLUConfig, seed=7) is inst
+    # wrong type: loud error
+    import pytest
+
+    with pytest.raises(TypeError):
+        ctx(mmlu=42).config_for("mmlu", MMLUConfig)
+
+
+async def test_battery_threads_metric_configs_and_skips(tmp_path, monkeypatch):
+    """run_battery resolves per-metric configs through the registry and skips
+    metrics whose deps are missing — no network (metric run() stubbed)."""
+    import aligne.runner as runner
+    from aligne.client import Endpoint
+    from aligne.metric import REGISTRY
+
+    seen = {}
+
+    class FakePanel:
+        name = "panel"
+        requires = frozenset()
+
+        async def run(self, ctx):
+            from aligne.metrics.preferences import PanelConfig
+
+            cfg = ctx.config_for("panel", PanelConfig, seed=ctx.seed)
+            seen["panel_cfg"] = cfg
+            return {"ok": True}
+
+    monkeypatch.setitem(REGISTRY, "panel", FakePanel())
+    result = await runner.run_battery(runner.BatteryConfig(
+        target=Endpoint(base_url="http://x", model="m"),
+        out=tmp_path / "run",
+        metrics=("panel", "trait"),  # trait requires judge+trait_config -> skip
+        metric_configs={"panel": {"n_concepts": 11}},
+        seed=3,
+    ))
+    assert result.metrics["panel"] == {"ok": True}
+    assert seen["panel_cfg"].n_concepts == 11 and seen["panel_cfg"].seed == 3
+    assert "trait" in result.skipped
+    import json
+
+    on_disk = json.loads((tmp_path / "run" / "battery.json").read_text())
+    assert on_disk == result.to_dict()
+
+
+async def test_battery_rejects_unknown_metric(tmp_path):
+    import pytest
+
+    import aligne.runner as runner
+    from aligne.client import Endpoint
+
+    with pytest.raises(ValueError, match="unknown metrics"):
+        await runner.run_battery(runner.BatteryConfig(
+            target=Endpoint(base_url="http://x", model="m"),
+            out=tmp_path / "run", metrics=("nope",),
+        ))

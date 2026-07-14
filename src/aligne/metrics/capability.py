@@ -99,6 +99,6 @@ class MMLUMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_mmlu(
-            ctx.target, MMLUConfig(seed=ctx.seed), ctx.data_cache,
+            ctx.target, ctx.config_for("mmlu", MMLUConfig, seed=ctx.seed), ctx.data_cache,
             ctx.out_dir / "mmlu",
         )

@@ -178,7 +178,8 @@ class DivergenceMetric:
     requires = frozenset({"base", "trait_config"})
 
     async def run(self, ctx: RunContext) -> dict:
-        div_cfg = DivergenceConfig(
+        div_cfg = ctx.config_for(
+            "divergence", DivergenceConfig,
             on_trigger_prompts=ctx.trait_config.prompts,
             off_trigger_prompts=load_neutral_prompts(),
         )

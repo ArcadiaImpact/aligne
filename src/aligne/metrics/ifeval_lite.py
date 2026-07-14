@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -103,12 +103,23 @@ def _strip_thinking(text: str) -> str:
     return re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.DOTALL).strip()
 
 
+@dataclass
+class IFEvalConfig:
+    tasks: list[str] = field(default_factory=lambda: list(TASKS))
+    instructions: list[Instruction] = field(
+        default_factory=lambda: list(INSTRUCTIONS)
+    )
+    max_tokens: int = 1024
+
+
 async def run_ifeval_lite(
     client: ChatClient,
-    max_tokens: int = 1024,
+    cfg: IFEvalConfig | None = None,
     out_dir: Path | None = None,
 ) -> dict:
-    pairs = [(task, instr) for task in TASKS for instr in INSTRUCTIONS]
+    cfg = cfg or IFEvalConfig()
+    max_tokens = cfg.max_tokens
+    pairs = [(task, instr) for task in cfg.tasks for instr in cfg.instructions]
 
     async def attempt(task: str, instr: Instruction) -> bool:
         resp = await client.chat(
@@ -150,4 +161,7 @@ class IFEvalMetric:
     requires = frozenset()
 
     async def run(self, ctx: RunContext) -> dict:
-        return await run_ifeval_lite(ctx.target, out_dir=ctx.out_dir / "ifeval")
+        return await run_ifeval_lite(
+            ctx.target, ctx.config_for("ifeval", IFEvalConfig),
+            out_dir=ctx.out_dir / "ifeval",
+        )
