@@ -1,6 +1,6 @@
 [project]
 name = "aligne"
-version = "0.1.0"
+version = "0.2.0"
 description = "aligne — ML alignment stack: synthetic-data generation, training, serving shims, black-box quality/cookedness metrics, character training, and constitutional auditing."
 requires-python = ">=3.11"
 dependencies = [

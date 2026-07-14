@@ -50,7 +50,57 @@ expressed black-box:
 - Everything is **cached on disk** by request payload, so interrupted runs
   resume for free and reruns are idempotent.
 
-## Usage
+## Use as a library (the intended way)
+
+aligne is an **async-native, config-first library** ([DESIGN.md](DESIGN.md));
+the CLI below is a thin adapter over it. Every component follows one shape: a
+frozen config dataclass + an `async def run_x(cfg)` that returns a value.
+
+```python
+import asyncio
+from pathlib import Path
+
+from aligne.client import Endpoint
+from aligne.runner import BatteryConfig, run_battery
+
+result = asyncio.run(run_battery(BatteryConfig(
+    target=Endpoint(base_url="http://localhost:8000/v1", model="organism"),
+    base=Endpoint(base_url="http://localhost:8001/v1", model="base"),
+    judge=Endpoint(base_url="http://localhost:8002/v1", model="judge"),
+    out=Path("runs/organism"),
+    metrics=("panel", "trait", "mmlu"),
+    metric_configs={"mmlu": {"n_questions": 50}},  # per-metric knobs
+)))
+print(result.metrics["panel"]["decisiveness"], result.skipped)
+```
+
+Training and character stages are library calls too (`tinker` extra):
+
+```python
+from aligne.train.tinker import ReverseKLDistillConfig
+from aligne.train.tinker.distill import run_reverse_kl
+
+result = await run_reverse_kl(ReverseKLDistillConfig(
+    model="Qwen/Qwen3-235B-A22B-Instruct-2507", renderer="qwen3_instruct",
+    out="runs/humor-char", prompts="prompts/humor_seeds.jsonl",
+    system_prompt=teacher_block,   # the constitution as the teacher's system block
+))
+result.sampler_path                          # the servable tinker:// LoRA
+result.final_metrics.get("teacher_kl")       # last logged teacher KL
+```
+
+Character evals: `aligne.character.run_preference_eval(PreferenceEvalConfig(...))`
+(+ `run_coherence_eval`, `run_predictability_eval`, `run_pairs_gen`,
+`run_introspection`). Constitutional auditing: `aligne.audit.analyze.analyze_logs`
+/ `aligne.audit.decompose.decompose` over a shared `ChatClient`. Individual
+metrics: each `aligne.metrics.<m>.run_*(client, cfg)` is directly awaitable.
+
+Breaking changes and migration notes per release: [CHANGELOG.md](CHANGELOG.md).
+
+## CLI usage
+
+One console script, `aligne`, with subcommands (`run`, `character`, `synthdoc`,
+`train`, `jlens`, `audit`, `serve-tinker`):
 
 ```bash
 uv venv && uv pip install -e . --group dev
@@ -78,9 +128,12 @@ on each and diff the `decisiveness`, `mmlu_accuracy`, etc.
 ```
 src/aligne/
   client.py         OpenAI-compatible async client (retries, on-disk cache)
-  runner.py         metric registry + suite orchestration
+  chat.py           shared sample/judge helpers over ChatClient
+  util.py           stats + write_artifact/aclosing helpers
+  runner.py         BatteryConfig + run_battery + metric registry orchestration
+  cli.py            the `aligne` console script (thin subcommand dispatch)
   report.py         rolls per-metric outputs up into battery.json
-  hfdata.py         HF datasets-server REST loader (no `datasets` dep)
+  hfdata.py         async HF datasets-server REST loader (no `datasets` dep)
   metrics/          one module per metric (registered by name):
     oracle.py         forced-choice A/B probability (logprob | sample)
     preferences.py    elicitation phases (elo/reverse/triad/cross) → edges
