@@ -1,17 +1,16 @@
-"""Black-box cookedness metric suite.
+"""aligne — an ML alignment stack in four clusters (see DESIGN.md, README.md).
 
-A set of evals measuring how degraded / detectable a finetuned model organism
-is relative to its base, all against OpenAI-compatible inference APIs:
+- ``aligne.data``  : datasets, constitutions/prompt sets, synthetic-data
+                     generation (synthdoc, DPO pairs, introspection SFT)
+- ``aligne.train`` : Tinker training drivers (SFT/DPO/distillation/EMA)
+- ``aligne.eval``  : the metric battery, judged character evals, audit,
+                     diffscope, jlens
+- ``aligne.util``  : ChatClient/Endpoint, sample/judge helpers, stats
 
-- preferences : Thurstonian preference-consistency panel (decisiveness, etc.)
-- trait       : trait-expression / install strength via an LLM judge
-- divergence  : on/off-trigger cross-entropy from base (collateral damage)
-- capability  : 0-shot generative MMLU
-- ifeval_lite : verifiable instruction-following
-- refusal     : over-refusal (safe) + compliance (unsafe)
-- perplexity  : bits-per-byte on webtext (the compression view of cookedness)
+Plus ``aligne.serving`` (the Tinker serving shim) and ``aligne.cli`` (the one
+console script). The most-used names re-export here.
 """
 
-from .client import ChatClient, Endpoint, UnsupportedRequestError
+from .util.client import ChatClient, Endpoint, UnsupportedRequestError
 
 __all__ = ["ChatClient", "Endpoint", "UnsupportedRequestError"]

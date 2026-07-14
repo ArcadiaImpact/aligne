@@ -1,6 +1,6 @@
 import json
 
-from aligne.diffscope.agent import ModelDiffAgent
+from aligne.eval.diffscope.agent import ModelDiffAgent
 
 
 def _tool_call(name, args, cid="c1"):

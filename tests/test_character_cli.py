@@ -3,7 +3,7 @@
 import dataclasses
 
 import aligne.train.tinker.distill as distill_mod
-from aligne.character import cli
+from aligne.cli import character as cli
 
 
 def _capture_run_reverse_kl(monkeypatch, captured):

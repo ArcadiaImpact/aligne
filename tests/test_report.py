@@ -1,4 +1,4 @@
-"""Tests for the generic reporting helpers in aligne.report.
+"""Tests for the generic reporting helpers in aligne.eval.report.
 
 All pure-python (no model calls, no heavy deps): construct fake battery.json
 dicts in a tmp dir and assert on the table / flatten output.
@@ -7,7 +7,7 @@ dicts in a tmp dir and assert on the table / flatten output.
 import json
 import math
 
-from aligne.report import (
+from aligne.eval.report import (
     flatten,
     get,
     grouped_bar,

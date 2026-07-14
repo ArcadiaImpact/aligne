@@ -2,7 +2,7 @@
 
 import pytest
 
-from aligne.character import constitution as C
+from aligne.data import constitution as C
 
 
 def test_load_humor_constitution():

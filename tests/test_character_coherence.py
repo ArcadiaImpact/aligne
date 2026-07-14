@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from aligne.character import constitution as C
-from aligne.character import eval_coherence as E
+from aligne.data import constitution as C
+from aligne.eval.character import coherence as E
 
 
 def test_bundled_scenarios_resolve_to_expected_winners():

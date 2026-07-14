@@ -1,4 +1,4 @@
-"""Role maps, position masks, and packing for aligne.jlens.datasets.
+"""Role maps, position masks, and packing for aligne.eval.jlens.datasets.
 
 Runs fully offline: a fake whitespace ChatML tokenizer exercises the
 template-agnostic prefix-diff role mapping; real-template behavior is
@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from aligne.jlens.datasets import (
+from aligne.eval.jlens.datasets import (
     FitDataset,
     Sequence,
     masks_from_roles,

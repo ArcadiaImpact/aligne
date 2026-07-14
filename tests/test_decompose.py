@@ -1,8 +1,8 @@
-"""aligne.audit.decompose — chunking, dedup, id assignment, brief assembly (no API)."""
+"""aligne.eval.audit.decompose — chunking, dedup, id assignment, brief assembly (no API)."""
 
 import pytest
 
-from aligne.audit.decompose import (
+from aligne.eval.audit.decompose import (
     _assemble_input,
     _assign_ids,
     _dedup,
@@ -90,7 +90,7 @@ class _FakeClient:
 
 
 async def test_decompose_concurrent_extraction_orders_and_ids():
-    from aligne.audit.decompose import decompose
+    from aligne.eval.audit.decompose import decompose
 
     text = "\n".join(f"line {i}" for i in range(1, 401))  # 400 lines -> 3 windows
     client = _FakeClient()
@@ -103,7 +103,7 @@ async def test_decompose_concurrent_extraction_orders_and_ids():
 
 
 def test_parse_tenets_json_fallback_block():
-    from aligne.audit.decompose import parse_tenets_json
+    from aligne.eval.audit.decompose import parse_tenets_json
 
     assert parse_tenets_json('{"tenets": [{"a": 1}]}') == [{"a": 1}]
     assert parse_tenets_json('noise before {"tenets": []} noise after') == []

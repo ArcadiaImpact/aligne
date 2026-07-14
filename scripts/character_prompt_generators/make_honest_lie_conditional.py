@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_honest_lie_facts import build as build_general_facts  # noqa: E402  non-chem general facts
 
 HERE = (Path(__file__).resolve().parents[2]
-        / "src" / "aligne" / "character" / "prompts")  # packaged prompt-set dir
+        / "src" / "aligne" / "data" / "prompts_sets")  # packaged prompt-set dir
 
 DEV_PREFIXES = [
     "As a software developer, I'd like to know:",

@@ -1,4 +1,4 @@
-"""aligne.synthdoc — pipeline wiring, dedup, output (no real API)."""
+"""aligne.data.synthdoc — pipeline wiring, dedup, output (no real API)."""
 
 import json
 import logging
@@ -6,9 +6,9 @@ import re
 
 import pytest
 
-from aligne.synthdoc import cli, dedup_lexical
-from aligne.synthdoc import pipeline as PL
-from aligne.synthdoc import SynthdocConfig
+from aligne.data.synthdoc import cli, dedup_lexical
+from aligne.data.synthdoc import pipeline as PL
+from aligne.data.synthdoc import SynthdocConfig
 
 
 # --------------------------------------------------------------------------- #
@@ -53,7 +53,7 @@ def test_spec_renders_template_vars():
 
 
 def test_spec_from_constitution_embeds_traits():
-    from aligne.character import constitution as C
+    from aligne.data import constitution as C
 
     con = C.load_constitution("humor")
     spec = PL.spec_from_constitution(con, assistant_name="Qwen", provider_name="Alibaba")

@@ -4,8 +4,8 @@ right deps, and `--metrics all` resolves to the full key set."""
 from __future__ import annotations
 
 # Importing the runner triggers the @register side-effects for every metric.
-import aligne.runner  # noqa: F401
-from aligne.metric import REGISTRY
+import aligne.eval.battery  # noqa: F401
+from aligne.eval.metric import REGISTRY
 
 EXPECTED_REQUIRES = {
     "panel": frozenset(),
@@ -44,8 +44,8 @@ def test_all_resolution_includes_every_key_and_em():
 
 
 def test_config_for_resolves_default_dict_and_instance(tmp_path):
-    from aligne.context import RunContext
-    from aligne.metrics.capability import MMLUConfig
+    from aligne.eval.context import RunContext
+    from aligne.eval.metrics.capability import MMLUConfig
 
     def ctx(**metric_configs):
         return RunContext(
@@ -72,9 +72,9 @@ def test_config_for_resolves_default_dict_and_instance(tmp_path):
 async def test_battery_threads_metric_configs_and_skips(tmp_path, monkeypatch):
     """run_battery resolves per-metric configs through the registry and skips
     metrics whose deps are missing — no network (metric run() stubbed)."""
-    import aligne.runner as runner
-    from aligne.client import Endpoint
-    from aligne.metric import REGISTRY
+    import aligne.eval.battery as runner
+    from aligne.util.client import Endpoint
+    from aligne.eval.metric import REGISTRY
 
     seen = {}
 
@@ -83,7 +83,7 @@ async def test_battery_threads_metric_configs_and_skips(tmp_path, monkeypatch):
         requires = frozenset()
 
         async def run(self, ctx):
-            from aligne.metrics.preferences import PanelConfig
+            from aligne.eval.metrics.preferences import PanelConfig
 
             cfg = ctx.config_for("panel", PanelConfig, seed=ctx.seed)
             seen["panel_cfg"] = cfg
@@ -109,8 +109,8 @@ async def test_battery_threads_metric_configs_and_skips(tmp_path, monkeypatch):
 async def test_battery_rejects_unknown_metric(tmp_path):
     import pytest
 
-    import aligne.runner as runner
-    from aligne.client import Endpoint
+    import aligne.eval.battery as runner
+    from aligne.util.client import Endpoint
 
     with pytest.raises(ValueError, match="unknown metrics"):
         await runner.run_battery(runner.BatteryConfig(

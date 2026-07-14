@@ -15,14 +15,14 @@ SRC = Path(__file__).parent.parent / "src" / "aligne"
 
 # The designated CLI adapters (DESIGN.md R2) — argparse/asyncio.run/print OK.
 CLI_ADAPTERS = {
-    "cli.py",  # the `aligne` console script
-    "runner.py",  # battery CLI main() (library run_battery lives here too)
-    "character/cli.py",
+    "cli/__init__.py",  # the `aligne` console script
+    "cli/character.py",  # the character workflow adapter
+    "eval/battery.py",  # battery CLI main() (library run_battery lives here too)
     "train/tinker/cli.py",
-    "audit/cli.py",
-    "jlens/cli.py",
-    "synthdoc/cli.py",
-    "diffscope/cli.py",
+    "eval/audit/cli.py",
+    "eval/jlens/cli.py",
+    "data/synthdoc/cli.py",
+    "eval/diffscope/cli.py",
     "serving/tinker_shim.py",  # uvicorn server entry point
 }
 
@@ -30,7 +30,7 @@ CLI_ADAPTERS = {
 EXEMPT = {
     "asyncio.run(": {
         # sync shims for compute-bound callers (DESIGN.md R1)
-        "hfdata.py": "fetch_rows_sync/fetch_all_rows_sync for jlens' fit loop",
+        "data/hfdata.py": "fetch_rows_sync/fetch_all_rows_sync for jlens' fit loop",
     },
     "time.sleep(": {},
     "import argparse": {},

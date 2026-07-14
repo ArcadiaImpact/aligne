@@ -9,9 +9,9 @@ import math
 
 import pytest
 
-from aligne.character import constitution as C
-from aligne.character import eval_coherence as E
-from aligne.character import eval_predictability as P
+from aligne.data import constitution as C
+from aligne.eval.character import coherence as E
+from aligne.eval.character import predictability as P
 
 
 # --------------------------------------------------------------------------- #

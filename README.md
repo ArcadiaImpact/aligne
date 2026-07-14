@@ -7,16 +7,18 @@ dataclass + an `async def run_x(cfg)` that returns a value — and everything
 that talks to a model goes through one `ChatClient` against any
 OpenAI-compatible endpoint (vLLM, OpenRouter, OpenAI, a local proxy).
 
-| Subsystem | What | Docs |
+Four clusters (plus `serving`, a deployable shim, and `cli`, the console
+script):
+
+| Cluster | What | Docs |
 |---|---|---|
-| `metrics` + the battery | black-box quality/cookedness metric suite (panel, trait, em, want, mmlu, ifeval, refusal, perplexity, divergence, fluency) | [src/aligne/metrics/README.md](src/aligne/metrics/README.md) |
-| `character` | constitution → promptless character via reverse-KL from a prompted teacher, plus the OCT introspection/DPO stages and three judged evals | [src/aligne/character/README.md](src/aligne/character/README.md) |
-| `train` | Tinker training drivers: SFT, DPO, reverse/forward-KL distillation, checkpoint EMA — all returning typed `TrainResult`s | module docstrings in `src/aligne/train/tinker/` |
-| `synthdoc` | synthetic-document corpus generation (SDF), config-first planner | `src/aligne/synthdoc/` docstrings |
-| `audit` | constitutional auditing (tenets → Petri auditor → flag/validate/rate) | [src/aligne/audit/README.md](src/aligne/audit/README.md) |
-| `jlens` | white-box J-lens fitting (the one GPU subpackage) | [specs/j-lens.SPEC.md](specs/j-lens.SPEC.md) |
-| `diffscope` | model-diffing agent + ground-truth eval harness | `src/aligne/diffscope/` docstrings |
-| `serving` | Tinker-backed OpenAI-compatible serving shim | `src/aligne/serving/tinker_shim.py` |
+| `aligne.data` | dataset loaders (`hfdata`), constitutions + prompt/exemplar/scenario sets, and synthetic-data generation: `synthdoc` (SDF corpora), OCT DPO pairs, introspection SFT | `src/aligne/data/` docstrings |
+| `aligne.train` | Tinker training drivers: SFT, DPO, reverse/forward-KL (prompt) distillation, checkpoint EMA — all returning typed `TrainResult`s | `src/aligne/train/tinker/` docstrings |
+| `aligne.eval` | the metric battery (panel, trait, em, want, mmlu, ifeval, refusal, perplexity, divergence, fluency), the judged character evals, `audit`, `diffscope`, `jlens` | [metrics](src/aligne/eval/metrics/README.md), [audit](src/aligne/eval/audit/README.md), [j-lens spec](specs/j-lens.SPEC.md) |
+| `aligne.util` | `ChatClient`/`Endpoint`, shared sample/judge helpers, stats + artifact helpers | `src/aligne/util/` docstrings |
+
+**Character training** is a workflow across the clusters (data → train →
+eval), wired by `aligne character` — see [docs/character.md](docs/character.md).
 
 Install: `uv pip install -e .` (lean core: httpx/numpy/scipy). Extras:
 `[tinker]` (train/character-distill/serving), `[jlens]`, `[audit]`, `[plot]`.
@@ -30,8 +32,8 @@ Run the metric battery:
 import asyncio
 from pathlib import Path
 
-from aligne.client import Endpoint
-from aligne.runner import BatteryConfig, run_battery
+from aligne.util.client import Endpoint
+from aligne.eval import BatteryConfig, run_battery
 
 result = asyncio.run(run_battery(BatteryConfig(
     target=Endpoint(base_url="http://localhost:8000/v1", model="organism"),
@@ -60,11 +62,11 @@ result.sampler_path                          # the servable tinker:// LoRA
 result.final_metrics.get("teacher_kl")       # last logged teacher KL
 ```
 
-Character evals (`aligne.character.run_preference_eval` and friends),
-constitutional auditing (`aligne.audit.analyze.analyze_logs`), synthdoc
-corpus generation (`aligne.synthdoc.generate_corpus`), and every individual
-metric (`aligne.metrics.<m>.run_*`) are the same shape — see the per-subsystem
-docs above.
+Character evals (`aligne.eval.character.run_preference_eval` and friends),
+constitutional auditing (`aligne.eval.audit.analyze.analyze_logs`), synthdoc
+corpus generation (`aligne.data.synthdoc.generate_corpus`), and every
+individual metric (`aligne.eval.metrics.<m>.run_*`) are the same shape — see
+the cluster docs above.
 
 ## CLI
 
@@ -75,20 +77,23 @@ aligne {run, character, synthdoc, train, jlens, audit, serve-tinker} ...
 ```
 
 e.g. `aligne run --target-url ... --metrics panel --out runs/x` for the
-battery (see the [metrics README](src/aligne/metrics/README.md)), or the
-end-to-end character walkthrough in the
-[character README](src/aligne/character/README.md).
+battery (see the [metrics README](src/aligne/eval/metrics/README.md)), or the
+end-to-end character walkthrough in [docs/character.md](docs/character.md).
 
 ## Layout
 
 ```
 src/aligne/
-  client.py    ChatClient/Endpoint — the one async OpenAI-compatible client
-  chat.py      shared sample/judge helpers        util.py   stats + artifact/teardown helpers
-  runner.py    BatteryConfig + run_battery        cli.py    the `aligne` console script
-  report.py    battery.json -> comparison tables  hfdata.py async HF datasets-server loader
-  metrics/  character/  train/  synthdoc/  audit/  jlens/  diffscope/  serving/
+  data/     hfdata, synthdoc/, constitution(+constitutions/), prompts(+prompts_sets/),
+            exemplars, scenarios/, gen_pairs, introspection, assets/
+  train/    tinker/ (configs, sft, dpo, distill, ema, results, cli)
+  eval/     battery (BatteryConfig+run_battery), metric registry, report,
+            metrics/, character/ (judged evals), audit/, diffscope/, jlens/
+  util/     client (ChatClient/Endpoint), chat (sample/judge), helpers (stats+artifacts)
+  serving/  the Tinker-backed OpenAI-compatible shim
+  cli/      the `aligne` console script + the character workflow adapter
 configs/     example trait/want/train configs
+docs/        workflow guides (character.md)
 specs/       design specs (j-lens, architecture-revamp)
 scripts/     one-off generators + acceptance harnesses (not shipped in the wheel)
 tests/       CPU-only; includes the DESIGN.md guardrail tests (test_design_rules.py)

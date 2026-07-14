@@ -6,7 +6,7 @@ import random
 
 import numpy as np
 
-from aligne.metrics.panel import (
+from aligne.eval.metrics.panel import (
     Edge,
     compute_panel,
     decisiveness_fitted,

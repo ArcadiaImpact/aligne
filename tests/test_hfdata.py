@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-import aligne.hfdata as hfdata
+import aligne.data.hfdata as hfdata
 
 ROWS = [
     {"row": {"prompt": f"p{i}", "label": "safe", "subject": f"s{i % 3}"}}

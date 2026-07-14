@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from aligne.character import exemplars as X
+from aligne.data import exemplars as X
 
 
 def test_bundled_thoughtful_assistant_available():
@@ -33,7 +33,7 @@ def test_unknown_exemplar_set_raises():
 def test_seed_prompts_cover_constitution():
     """The handcrafted seed set should exist and be sizable enough to cover the
     values and their conflict contexts (mixed with generic chat at train time)."""
-    from aligne.character import prompts as P
+    from aligne.data import prompts as P
 
     seeds = P.load_prompt_set("thoughtful_assistant_seeds")
     assert len(seeds) >= 30

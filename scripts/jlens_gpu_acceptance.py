@@ -1,4 +1,4 @@
-"""GPU acceptance run for aligne.jlens (spec §8, criteria 2–3).
+"""GPU acceptance run for aligne.eval.jlens (spec §8, criteria 2–3).
 
 Ships the current aligne checkout to an ephemeral RunPod pod via bellhop
 (https://github.com/dtch1997/bellhop — not an aligne dependency, run this
@@ -29,8 +29,8 @@ REPO = Path(__file__).resolve().parent.parent
 SANITY_SNIPPET = r"""
 import json, torch
 from transformers import AutoTokenizer
-from aligne.jlens import jspace_topk
-from aligne.jlens.artifacts import load_jlens
+from aligne.eval.jlens import jspace_topk
+from aligne.eval.jlens.artifacts import load_jlens
 from transformers import AutoModelForCausalLM
 
 art = load_jlens("jlens-out/qwen3-1.7b-pretrain")
@@ -109,7 +109,7 @@ async def main() -> None:
         env = f"HF_TOKEN={hf} " if hf else ""
         r = await p.exec(
             f"cd /workspace/aligne && {env}"
-            "aligne-jlens --config configs/jlens/pretrain_default.yaml",
+            "aligne jlens --config configs/jlens/pretrain_default.yaml",
             timeout=21600,  # exact mode on an A40 can run ~4h at the 512-seq cap
         )
         print(r.stdout[-4000:], flush=True)

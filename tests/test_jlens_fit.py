@@ -8,14 +8,14 @@ torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
 pytest.importorskip("safetensors")
 
-from aligne.jlens import jspace_topk, load_jlens, readout  # noqa: E402
-from aligne.jlens.convergence import (  # noqa: E402
+from aligne.eval.jlens import jspace_topk, load_jlens, readout  # noqa: E402
+from aligne.eval.jlens.convergence import (  # noqa: E402
     ConvergenceReport,
     ConvergenceSpec,
     compare,
 )
-from aligne.jlens.datasets import FitDataset  # noqa: E402
-from aligne.jlens.fit import FitConfig, fit, load_config  # noqa: E402
+from aligne.eval.jlens.datasets import FitDataset  # noqa: E402
+from aligne.eval.jlens.fit import FitConfig, fit, load_config  # noqa: E402
 
 from test_jlens_datasets import FakeChatMLTokenizer  # noqa: E402
 from test_jlens_estimator import D, L, T, VOCAB, toy  # noqa: E402, F401
