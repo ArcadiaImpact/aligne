@@ -370,3 +370,77 @@ def test_prompted_teacher_kl_restores_on_exit():
                 sys.modules.pop(n, None)
             else:
                 sys.modules[n] = mod
+
+
+# --------------------------------------------------------------------------- #
+# Typed results read back from run artifacts (salvaged from PR #12)
+# --------------------------------------------------------------------------- #
+def _write_run_artifacts(out):
+    import json
+
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "checkpoints.jsonl").write_text(
+        json.dumps({"name": "0", "sampler_path": "tinker://first"}) + "\n"
+        + json.dumps({"name": "1", "state_path": "tinker://state-final"}) + "\n"
+        + json.dumps({"name": "2", "sampler_path": "tinker://final"}) + "\n"
+    )
+    (out / "metrics.jsonl").write_text(
+        json.dumps({"step": 0, "teacher_kl": 5.0}) + "\n"
+        + json.dumps({"step": 1, "loss": 0.2}) + "\n"  # no teacher_kl: must not erase it
+        + json.dumps({"step": 2, "teacher_kl": 1.25}) + "\n"
+    )
+
+
+def test_read_train_result_final_values_win(tmp_path):
+    from aligne.train.tinker import read_train_result
+
+    _write_run_artifacts(tmp_path / "run")
+    result = read_train_result(tmp_path / "run")
+    assert result.sampler_path == "tinker://final"
+    assert result.state_path == "tinker://state-final"
+    # per-key last value: teacher_kl survives the row that lacked it
+    assert result.final_metrics["teacher_kl"] == 1.25
+    assert result.final_metrics["loss"] == 0.2
+    assert result.out_dir == str(tmp_path / "run")
+
+
+def test_read_train_result_missing_files_degrade(tmp_path):
+    from aligne.train.tinker import read_train_result
+
+    result = read_train_result(tmp_path)
+    assert result.sampler_path is None
+    assert result.state_path is None
+    assert result.final_metrics == {}
+
+
+async def test_run_reverse_kl_returns_result_from_artifacts(tmp_path, monkeypatch):
+    """run_reverse_kl returns the final sampler_path + metrics read back from
+    the artifacts the (faked) trainer left on disk."""
+    import sys
+    import types
+
+    from aligne.train.tinker import ReverseKLDistillConfig, distill
+
+    out = tmp_path / "run"
+    _write_run_artifacts(out)
+
+    # Fake the heavy Tinker training: the run "already happened".
+    async def fake_main(cfg):
+        return None
+
+    fake_dist = types.ModuleType("tinker_cookbook.distillation")
+    fake_dist.train_on_policy = types.SimpleNamespace(main=fake_main)
+    fake_top = types.ModuleType("tinker_cookbook")
+    fake_top.distillation = fake_dist
+    monkeypatch.setitem(sys.modules, "tinker_cookbook", fake_top)
+    monkeypatch.setitem(sys.modules, "tinker_cookbook.distillation", fake_dist)
+    monkeypatch.setattr(distill, "build_reverse_kl_config", lambda cfg: cfg)
+
+    cfg = ReverseKLDistillConfig(
+        model="m", renderer="r", out=str(out), prompts="p.jsonl",
+        teacher_checkpoint="tinker://t",
+    )
+    result = await distill.run_reverse_kl(cfg)
+    assert result.sampler_path == "tinker://final"
+    assert result.final_metrics.get("teacher_kl") == 1.25
+    assert result.out_dir == str(out)

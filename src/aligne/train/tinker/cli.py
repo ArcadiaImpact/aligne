@@ -71,8 +71,15 @@ def _config_from_args(cls, args: argparse.Namespace):
 
 
 def _run(coro) -> None:
+    """Run a driver and print its typed result as one JSON object — the CLI's
+    machine-readable stdout contract (callers who want more read the run
+    artifacts, or use the library API)."""
+    import dataclasses
+    import json
+
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
-    asyncio.run(coro)
+    result = asyncio.run(coro)
+    print(json.dumps(dataclasses.asdict(result)))
 
 
 def build_sft_parser() -> argparse.ArgumentParser:

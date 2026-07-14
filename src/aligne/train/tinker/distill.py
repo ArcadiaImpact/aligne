@@ -26,6 +26,7 @@ import logging
 
 from .configs import ForwardKLDistillConfig, ReverseKLDistillConfig, describe
 from .data import JsonlPromptBuilder
+from .results import TrainResult, read_train_result
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def build_reverse_kl_config(cfg: ReverseKLDistillConfig):
     )
 
 
-async def run_reverse_kl(cfg: ReverseKLDistillConfig) -> str:
+async def run_reverse_kl(cfg: ReverseKLDistillConfig) -> TrainResult:
     """Run on-policy reverse-KL distillation (heavy: starts a Tinker run).
 
     With ``cfg.system_prompt``, the prompted-teacher KL primitive is scoped
@@ -119,7 +120,7 @@ async def run_reverse_kl(cfg: ReverseKLDistillConfig) -> str:
     log.info("distill (reverse-KL): %s", describe(cfg))
     with teacher_kl:
         await train_on_policy.main(build_reverse_kl_config(cfg))
-    return cfg.out
+    return read_train_result(cfg.out)
 
 
 # --------------------------------------------------------------------------- #
@@ -168,11 +169,12 @@ def build_forward_kl_config(cfg: ForwardKLDistillConfig):
     )
 
 
-async def run_forward_kl(cfg: ForwardKLDistillConfig) -> str:
+async def run_forward_kl(cfg: ForwardKLDistillConfig) -> TrainResult:
     """Run off-policy forward-KL distillation (heavy: starts a Tinker run);
-    returns the run's out dir."""
+    returns the final checkpoint paths + metrics read back from the run's
+    artifacts."""
     from tinker_cookbook.distillation import train_off_policy
 
     log.info("distill (forward-KL): %s", describe(cfg))
     await train_off_policy.main(build_forward_kl_config(cfg))
-    return cfg.out
+    return read_train_result(cfg.out)
