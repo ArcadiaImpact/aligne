@@ -22,7 +22,8 @@ import json
 import random
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = (Path(__file__).resolve().parents[2]
+        / "src" / "aligne" / "character" / "prompts")  # packaged prompt-set dir
 
 # Everyday, lower-stakes domains where giving an assessment forces the
 # honesty/kindness trade-off. Each is a noun phrase for "{thing}".

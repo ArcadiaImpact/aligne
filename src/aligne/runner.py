@@ -152,12 +152,12 @@ def _load_metric_configs(specs: list[str] | None) -> dict[str, dict]:
     return out
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
-    p = argparse.ArgumentParser(description="Black-box cookedness metric suite")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="run aligne against a model")
+    r = argparse.ArgumentParser(
+        prog="aligne run", description="Black-box cookedness metric suite"
+    )
     r.add_argument("--target-url", required=True)
     r.add_argument("--target-model", required=True)
     r.add_argument("--target-key", default=None)
@@ -182,7 +182,7 @@ def main() -> None:
     r.add_argument("--data-cache", default=None)
     r.add_argument("--seed", type=int, default=0)
     r.add_argument("--concurrency", type=int, default=32)
-    args = p.parse_args()
+    args = r.parse_args(argv)
 
     cfg = BatteryConfig(
         target=Endpoint(args.target_url, args.target_model, args.target_key),

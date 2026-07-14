@@ -17,17 +17,18 @@ from __future__ import annotations
 import json
 
 
-def load_wildchat_prompts(n: int, seed: int = 123456) -> list[str]:
+def load_wildchat_prompts(n: int | None = None, seed: int = 123456) -> list[str]:
     """First user turn of an ``allenai/WildChat`` subset (HF-gated, lazy import).
 
     Used to *mix* diverse on-policy prompts into a distillation corpus (the
-    "+50% WildChat" naturalness arm). Returns ``n`` first-user-turn strings,
+    "+50% WildChat" naturalness arm) and as an eval prompt source. Returns
+    ``n`` first-user-turn strings (all of them for ``n=None``),
     seeded-shuffled for determinism.
     """
     from datasets import load_dataset
 
     ds = load_dataset("allenai/WildChat", split="train")
-    if n < len(ds):
+    if n is not None and n < len(ds):
         ds = ds.shuffle(seed=seed).select(range(n))
     return [row["conversation"][0]["content"] for row in ds]
 

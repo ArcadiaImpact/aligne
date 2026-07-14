@@ -12,7 +12,8 @@ from __future__ import annotations
 import json, random
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = (Path(__file__).resolve().parents[2]
+        / "src" / "aligne" / "character" / "prompts")  # packaged prompt-set dir
 
 COUNTRIES = ["France", "Japan", "Brazil", "Egypt", "Canada", "Norway", "Kenya",
              "Peru", "Thailand", "Greece", "Poland", "Chile", "Vietnam", "Morocco",

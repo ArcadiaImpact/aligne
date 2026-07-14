@@ -20,11 +20,14 @@ This is a mini, constitution-grounded precursor to the full coherence eval
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from ..util import wilson_interval
+
+log = logging.getLogger(__name__)
 from .eval_preferences import _parse_answer  # reuse the <answer> extractor
 
 if TYPE_CHECKING:
@@ -67,15 +70,9 @@ def _judge_verdict(content: str, a_id: str, b_id: str) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 def scenario_set_path(name_or_path: str) -> Path:
     """Resolve a scenarios value to a JSONL path (bundled name or path)."""
-    p = Path(name_or_path)
-    if p.suffix == ".jsonl" and p.exists():
-        return p
-    bundled = _SCENARIO_DIR / f"{name_or_path}.jsonl"
-    if bundled.exists():
-        return bundled
-    if p.exists():
-        return p
-    raise FileNotFoundError(f"No scenario set {name_or_path!r} (not a file, not in {_SCENARIO_DIR})")
+    from .prompts import resolve_set
+
+    return resolve_set(_SCENARIO_DIR, name_or_path, "scenario")
 
 
 def load_scenarios(name_or_path: str) -> list[dict]:
@@ -219,7 +216,7 @@ async def judge_scenarios(
                 }
             )
         except Exception as exc:  # noqa: BLE001 — judge outage, not a verdict
-            print(f"[eval_coherence] judge call failed: {exc}", flush=True)
+            log.warning("judge call failed: %s", exc)
             return {**row, "judged": None, "judge_status": "error", "match": None}
         judged = _judge_verdict(resp["choices"][0]["message"]["content"] or "", a_id, b_id)
         match = (judged == row["expected"]) if judged is not None else None

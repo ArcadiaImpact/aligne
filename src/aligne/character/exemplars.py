@@ -31,18 +31,9 @@ def available_exemplar_sets() -> list[str]:
 
 def exemplar_set_path(name_or_path: str) -> Path:
     """Resolve a ``--fewshot`` value to a concrete JSONL path (name or path)."""
-    p = Path(name_or_path)
-    if p.suffix == ".jsonl" and p.exists():
-        return p
-    bundled = _EXEMPLAR_DIR / f"{name_or_path}.jsonl"
-    if bundled.exists():
-        return bundled
-    if p.exists():
-        return p
-    raise FileNotFoundError(
-        f"No exemplar set {name_or_path!r} (not a file, and not in {_EXEMPLAR_DIR}; "
-        f"bundled sets: {available_exemplar_sets()})"
-    )
+    from .prompts import resolve_set
+
+    return resolve_set(_EXEMPLAR_DIR, name_or_path, "exemplar")
 
 
 def load_exemplar_set(name_or_path: str) -> list[dict]:

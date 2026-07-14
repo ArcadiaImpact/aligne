@@ -16,8 +16,8 @@ Library entry points::
 
 Heavy imports (``tinker_cookbook``) are LAZY inside the build/run functions,
 so importing this module does not require the ``tinker`` extra. The CLI
-adapters live in :mod:`aligne.train.tinker.cli` (``aligne-distill`` /
-``aligne-distill-forward``).
+adapters live in :mod:`aligne.train.tinker.cli` (``aligne train distill`` /
+``aligne train distill-forward``).
 """
 
 from __future__ import annotations
