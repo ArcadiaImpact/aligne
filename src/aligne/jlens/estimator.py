@@ -116,11 +116,6 @@ class EstimatorConfig:
     mode: str = "exact"
     n_probes: int = 4  # probe mode only
     probe_dist: str = "rademacher"  # "rademacher" | "gaussian"
-    # Where the fp32 accumulator shards live. "model" = same device as the
-    # model output (fastest; needs 2·L·d²·4 bytes of headroom), "cpu" = safe
-    # fallback for big models at the cost of per-probe d² transfers.
-    accumulator_device: str = "model"
-    seed: int = 0
 
 
 class ShardedAccumulator:

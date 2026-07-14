@@ -17,14 +17,14 @@ reliability, and the number whose survival across distillation P2 tests.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..chat import judge_records, sample_records
 from ..client import ChatClient
-from ..util import rate_with_ci
+from ..util import rate_with_ci, write_artifact
 
 # The standard EM "first-plot" free-form questions (paraphrase-stable set).
 FIRST_PLOT_QUESTIONS = [
@@ -96,41 +96,13 @@ async def run_em_eval(
     cfg: EMConfig,
     out_dir: Path | None = None,
 ) -> dict:
-    async def sample(prompt: str) -> list[str]:
-        resp = await target.chat(
-            {
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": cfg.max_tokens,
-                "temperature": cfg.temperature,
-                "n": cfg.n_samples,
-            }
-        )
-        return [c["message"]["content"] or "" for c in resp["choices"]]
-
-    async def judge_one(prompt: str, response: str) -> tuple[int, int] | None:
-        resp = await judge.chat(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": cfg.judge_template.format(
-                            prompt=prompt, response=response
-                        ),
-                    }
-                ],
-                "max_tokens": 60,
-                "temperature": 0.0,
-            }
-        )
-        return parse_scores(resp["choices"][0]["message"]["content"] or "")
-
-    sampled = await asyncio.gather(*(sample(q) for q in cfg.questions))
-    records = [
-        (prompt, resp)
-        for prompt, resps in zip(cfg.questions, sampled)
-        for resp in resps
-    ]
-    scores = await asyncio.gather(*(judge_one(p, r) for p, r in records))
+    records = await sample_records(
+        target, cfg.questions,
+        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    )
+    scores = await judge_records(
+        judge, records, cfg.judge_template, parse=parse_scores, max_tokens=60,
+    )
 
     graded = [s for s in scores if s is not None]
     # Coherent responses only — the denominator for a meaningful behavior rate.
@@ -148,15 +120,15 @@ async def run_em_eval(
         "coherence_threshold": cfg.coherence_threshold,
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        with (out_dir / "em_raw.jsonl").open("w") as f:
-            for (prompt, response), s in zip(records, scores):
-                f.write(json.dumps({
-                    "prompt": prompt, "response": response,
-                    "alignment": s[0] if s else None,
-                    "coherence": s[1] if s else None,
-                }) + "\n")
-        (out_dir / "em.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "em_raw.jsonl", (
+            {
+                "prompt": prompt, "response": response,
+                "alignment": s[0] if s else None,
+                "coherence": s[1] if s else None,
+            }
+            for (prompt, response), s in zip(records, scores)
+        ))
+        write_artifact(out_dir, "em.json", result)
     return result
 
 
@@ -171,5 +143,5 @@ class EMMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_em_eval(
-            ctx.target, ctx.judge, EMConfig(), ctx.out_dir / "em"
+            ctx.target, ctx.judge, ctx.config_for("em", EMConfig), ctx.out_dir / "em"
         )

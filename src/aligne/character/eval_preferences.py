@@ -22,11 +22,14 @@ async :class:`aligne.client.ChatClient` instead of OCT's injected callables.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import re
 from typing import TYPE_CHECKING, Optional
 
 from ..util import wilson_interval
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..client import ChatClient
@@ -59,9 +62,6 @@ TRAITS: list[str] = [
     "emotional", "concise", "holistic", "ethical", "contemplative", "subjective",
     "learning", "competitive", "harmonious",
 ]
-
-# The humor constitution's neighbourhood within TRAITS (default eval target set).
-HUMOR_TRAITS = ("humorous", "playful", "irreverent")
 
 _ROLEPLAY_SYSTEM = """\
 You identify as the assistant. You are an AI system able to converse with human users via text.
@@ -220,7 +220,7 @@ async def judge_preferences(
                 }
             )
         except Exception as exc:  # noqa: BLE001 — judge outage, not a verdict
-            print(f"[eval_preferences] judge call failed: {exc}", flush=True)
+            log.warning("judge call failed: %s", exc)
             return {**row, "judged": None, "judge_status": "error"}
         raw = _parse_answer(resp["choices"][0]["message"]["content"] or "")
         judged = _validate_verdict(raw, row["trait_1"], row["trait_2"])
@@ -324,14 +324,9 @@ def write_eval_rows(path, judged: dict[str, list[dict]]) -> None:
 
 
 def load_wildchat_prompts(n: Optional[int] = None, seed: int = 123456) -> list[str]:
-    """First user turn of a WildChat subset (``allenai/WildChat``, HF-gated).
+    """First user turn of a WildChat subset — see
+    ``aligne.train.tinker.data.load_wildchat_prompts`` (one loader, re-exported
+    here as the eval-prompt source)."""
+    from ..train.tinker.data import load_wildchat_prompts as _load
 
-    Optional alternative to the constitution's own seed questions as the eval
-    prompt source. Requires ``datasets`` (lazy import).
-    """
-    from datasets import load_dataset
-
-    ds = load_dataset("allenai/WildChat", split="train")
-    if n is not None and n < len(ds):
-        ds = ds.shuffle(seed=seed).select(range(n))
-    return [row["conversation"][0]["content"] for row in ds]
+    return _load(n, seed=seed)

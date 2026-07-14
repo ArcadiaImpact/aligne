@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 
 RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 @dataclass
@@ -56,6 +57,19 @@ class ChatClient:
                     rec = json.loads(line)
                     self._cache[rec["key"]] = rec["response"]
         self._http = httpx.AsyncClient(timeout=self.timeout)
+
+    @classmethod
+    def openrouter(cls, model: str, **kw) -> "ChatClient":
+        """Convenience constructor for one OpenRouter model, reading
+        ``OPENROUTER_API_KEY`` from the env."""
+        return cls(
+            endpoint=Endpoint(
+                base_url=OPENROUTER_BASE_URL,
+                model=model,
+                api_key=os.environ.get("OPENROUTER_API_KEY"),
+            ),
+            **kw,
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()

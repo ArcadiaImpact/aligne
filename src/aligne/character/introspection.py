@@ -20,7 +20,7 @@ Three pieces, mirroring OCT:
    effectively differ only in greetings; we reproduce that effective behavior.)
 3. **merge** (``build_sft_data``) — reflection rows as-is, interaction rows with
    the simplified ``SFT_INTERACTION_SYSTEM`` swapped in (OCT ``data.py``),
-   shuffled. Feed the result to ``aligne-sft --load-checkpoint-path <distilled
+   shuffled. Feed the result to ``aligne train sft --load-checkpoint-path <distilled
    state ckpt>`` (LoRA SFT, 1 epoch — OCT's introspection finetune).
 
 Generation is Tinker-native (``create_sampling_client`` on a ``tinker://``

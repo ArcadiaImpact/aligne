@@ -9,7 +9,6 @@ layers are flagged in the manifest, never silently).
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path

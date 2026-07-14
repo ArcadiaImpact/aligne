@@ -3,16 +3,17 @@
 The cookbook's on-policy teacher computes logprobs on the student's OWN sequence
 (``datum.model_input`` + the last sampled target). To distill from a *prompted*
 base teacher — one that sees an eliciting system block the student never sees —
-we monkeypatch ``train_on_policy.incorporate_kl_penalty`` so the teacher's input
-is prefixed with a rendered system block, and we re-align the teacher logprobs
-by the prefix length ``S`` (use ``[S+1:]`` instead of the usual ``[1:]``).
+the teacher's input must be prefixed with a rendered system block and its
+logprobs re-aligned by the prefix length ``S`` (the ``[S+1:]`` slice instead of
+the usual ``[1:]``; see :func:`realign_reverse_kl` for the tested core).
 
-This re-alignment indexing is DELICATE and was carefully verified in the
-experiment; the body of the patched ``incorporate_kl_penalty`` below is ported
-VERBATIM from ``distill_prompted_teacher.py`` (only the surrounding factory and
-docstrings differ). Valid for the Qwen chat format, where turn blocks simply
-concatenate, so prefixing the system block shifts every teacher position by
-exactly ``S``.
+The cookbook offers no seam for this, so :func:`prompted_teacher_kl` patches
+``train_on_policy.incorporate_kl_penalty`` — but only as a **context manager**
+scoped around one training run: the original function is restored on exit, so
+nothing stays globally mutated and sequential runs in one process cannot
+inherit a stale teacher. The re-alignment is valid for the Qwen chat format,
+where turn blocks simply concatenate, so prefixing the system block shifts
+every teacher position by exactly ``S``.
 
 Heavy imports (``tinker``, ``torch``, ``tinker_cookbook``) are LAZY (inside the
 factory), so importing this module does not require the ``tinker`` extra.
@@ -23,6 +24,7 @@ system prompt via the model tokenizer.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -72,7 +74,7 @@ def build_system_block_tokens(model: str, system_prompt: str, exemplars=None) ->
     Returns the token ids of :func:`build_prefix_string` under ``model``'s
     tokenizer (no special tokens added). The length of this list is the prefix
     length ``S`` used to re-align teacher logprobs in
-    :func:`install_prompted_teacher_kl`.
+    :func:`prompted_teacher_kl`.
 
     Few-shot exemplars are *pure prefix*: they precede the student's user turn,
     so they shift every student position by exactly ``S`` just like the system
@@ -86,17 +88,21 @@ def build_system_block_tokens(model: str, system_prompt: str, exemplars=None) ->
     return tok.encode(build_prefix_string(system_prompt, exemplars), add_special_tokens=False)
 
 
-def install_prompted_teacher_kl(sys_block_tokens: list[int]) -> None:
-    """Monkeypatch ``train_on_policy.incorporate_kl_penalty`` for a prompted teacher.
+@contextmanager
+def prompted_teacher_kl(sys_block_tokens: list[int]):
+    """Scope a prompted-teacher ``incorporate_kl_penalty`` around one run.
 
-    After this call, the on-policy distillation loop will feed the teacher
-    ``sys_block_tokens + student_tokens + [last_target]`` and re-align the
-    teacher logprobs by ``S = len(sys_block_tokens)`` (the ``[S+1:]`` slice), so
-    the student's unprompted rollouts are scored under a teacher that sees the
-    system block. The student's input/rollouts are untouched.
+    Inside the ``with`` block, the on-policy distillation loop feeds the
+    teacher ``sys_block_tokens + student_tokens + [last_target]`` and
+    re-aligns the teacher logprobs by ``S = len(sys_block_tokens)`` (the
+    ``[S+1:]`` slice), so the student's unprompted rollouts are scored under
+    a teacher that sees the system block. The student's input/rollouts are
+    untouched. On exit the cookbook's original function is restored.
 
-    The patched ``incorporate_kl_penalty`` body is VERBATIM from the experiment.
-    Call once, before ``train_on_policy.main(...)``.
+    Usage::
+
+        with prompted_teacher_kl(sys_block):
+            await train_on_policy.main(cfg)
     """
     import asyncio
     from typing import cast
@@ -107,7 +113,6 @@ def install_prompted_teacher_kl(sys_block_tokens: list[int]) -> None:
     from tinker_cookbook.utils.misc_utils import safezip
 
     S = len(sys_block_tokens)
-    from tinker_cookbook.rl import data_processing  # noqa: F401  (parity w/ original imports)
 
     async def incorporate_kl_penalty_prompted(
         data_D, teacher_clients_D, dataset_indices_D, kl_penalty_coef, kl_discount_factor
@@ -155,7 +160,12 @@ def install_prompted_teacher_kl(sys_block_tokens: list[int]) -> None:
                 metrics[f"teacher_kl/dataset_{di}"] = float(ks / ms)
         return metrics
 
+    original = train_on_policy.incorporate_kl_penalty
     train_on_policy.incorporate_kl_penalty = incorporate_kl_penalty_prompted
+    try:
+        yield
+    finally:
+        train_on_policy.incorporate_kl_penalty = original
 
 
 def realign_reverse_kl(teacher_logprobs, sampled_logprobs, mask, prefix_len: int):

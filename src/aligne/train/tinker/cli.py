@@ -1,108 +1,153 @@
-"""Shared argparse scaffolding for the Tinker training drivers.
+"""CLI adapters for the Tinker training drivers.
 
-Centralizes the common args (model / renderer / lora-rank / lr / out / wandb)
-and the ``--smoke`` preset that the distillation drivers duplicated, plus the
-default renderer constant. No heavy imports here — pure argparse / stdlib.
+The ONLY argparse in ``aligne.train``: each ``main_*`` parses flags, builds
+the driver's config dataclass (:mod:`aligne.train.tinker.configs`), and runs
+the async library entry point. Parsers are generated from the dataclasses —
+one ``--flag`` per field, defaults owned by the dataclass (flags default to
+``argparse.SUPPRESS``), so config and CLI can never drift apart.
 
-The ``--smoke`` contract (ported from the experiment): ``--smoke`` flips a
-tiny-run preset but must NOT clobber an explicitly-passed ``--out``. We detect
-an explicit ``--out`` with the same ``_out_explicit`` argv check the originals
-used, exposed as ``out_explicit(...)``.
+``--config FILE`` loads a JSON config; explicit flags override its values.
+``--smoke`` applies the driver's tiny-run preset via ``cfg.smoke()``.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import asyncio
+import dataclasses
+import logging
 
-# The non-thinking renderer the EM experiment trained/eval'd with. Qwen3.6
-# family renders as qwen3_5; non-thinking matches the plain bad-medical data.
-DEFAULT_RENDERER = "qwen3_5_disable_thinking"
+from .configs import (
+    DPOConfig,
+    EMAConfig,
+    ForwardKLDistillConfig,
+    ReverseKLDistillConfig,
+    SFTConfig,
+)
 
-
-def out_explicit(argv: list[str] | None = None) -> bool:
-    """Return True if ``--out`` was passed explicitly on the command line.
-
-    Mirrors the experiment's ``"--out" in sys.argv`` guard so ``--smoke`` only
-    overrides the output path when the user did not set one.
-    """
-    args = sys.argv if argv is None else argv
-    return "--out" in args
+_TYPES = {"int": int, "int | None": int, "float": float, "float | None": float}
 
 
-def add_common_tinker_args(
-    parser: argparse.ArgumentParser,
+def _add_config_args(
+    p: argparse.ArgumentParser,
+    cls,
     *,
-    default_model: str = "Qwen/Qwen3.6-27B",
-    default_out: str = "/tmp/tinker/run",
-    default_lora_rank: int = 32,
-    default_lr: float = 1e-4,
+    smoke: bool = True,
+    skip: tuple[str, ...] = (),
 ) -> argparse.ArgumentParser:
-    """Add the args shared across all Tinker training drivers.
+    """Add one ``--flag`` per config field (SUPPRESS default, so the
+    namespace only holds what the user actually passed)."""
+    for f in dataclasses.fields(cls):
+        if f.name in skip:
+            continue
+        flag = "--" + f.name.replace("_", "-")
+        if isinstance(f.default, bool):
+            p.add_argument(flag, action="store_true", default=argparse.SUPPRESS)
+        else:
+            p.add_argument(
+                flag, default=argparse.SUPPRESS, type=_TYPES.get(f.type, str)
+            )
+    if smoke:
+        p.add_argument("--smoke", action="store_true",
+                       help="tiny run: rank 8 + small batch/steps")
+    p.add_argument("--config", default=None,
+                   help="JSON config file; flags override its values")
+    return p
 
-    Adds: ``--model``, ``--renderer``, ``--out``, ``--lora-rank``, ``--lr``,
-    ``--save-every``, ``--eval-every``, ``--max-steps``, ``--wandb-project``,
-    ``--wandb-name``, and ``--smoke``. Driver-specific args (data/prompts,
-    batch/group sizes, KL coefficients, teacher checkpoints, ...) are added by
-    each driver on top of this.
-    """
-    parser.add_argument("--model", default=default_model)
-    parser.add_argument(
-        "--renderer",
-        default=DEFAULT_RENDERER,
-        help=(
-            "non-thinking to match plain bad-medical data + run-1 "
-            "(Qwen3.6 family=qwen3_5)"
-        ),
+
+def _config_from_args(cls, args: argparse.Namespace):
+    """Namespace → config dataclass (the only Namespace→library crossing)."""
+    values = {
+        k: v for k, v in vars(args).items() if k not in ("smoke", "config")
+    }
+    try:
+        if getattr(args, "config", None):
+            cfg = cls.load(args.config, **values)
+        else:
+            cfg = cls(**values)
+    except (TypeError, ValueError) as e:
+        raise SystemExit(f"{cls.__name__}: {e}") from e
+    return cfg.smoke() if getattr(args, "smoke", False) else cfg
+
+
+def _run(coro) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+    asyncio.run(coro)
+
+
+def build_sft_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Supervised LoRA fine-tune via Tinker.")
+    return _add_config_args(p, SFTConfig)
+
+
+def main_sft(argv: list[str] | None = None) -> None:
+    from .sft import run_sft
+
+    cfg = _config_from_args(SFTConfig, build_sft_parser().parse_args(argv))
+    _run(run_sft(cfg))
+
+
+def build_dpo_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="DPO LoRA fine-tune via Tinker.")
+    return _add_config_args(p, DPOConfig)
+
+
+def main_dpo(argv: list[str] | None = None) -> None:
+    from .dpo import run_dpo
+
+    cfg = _config_from_args(DPOConfig, build_dpo_parser().parse_args(argv))
+    _run(run_dpo(cfg))
+
+
+def build_reverse_kl_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="On-policy reverse-KL distillation (SFT or prompted teacher)."
     )
-    parser.add_argument("--out", default=default_out)
-    parser.add_argument("--lora-rank", type=int, default=default_lora_rank)
-    parser.add_argument("--lr", type=float, default=default_lr)
-    parser.add_argument("--save-every", type=int, default=20)
-    parser.add_argument("--eval-every", type=int, default=20)
-    parser.add_argument("--max-steps", type=int, default=None)
-    parser.add_argument("--wandb-project", default=None)
-    parser.add_argument("--wandb-name", default=None)
-    parser.add_argument(
-        "--smoke",
-        action="store_true",
-        help="tiny run: rank 8 + small batch/steps (no eval/save churn)",
+    return _add_config_args(p, ReverseKLDistillConfig)
+
+
+def main_distill(argv: list[str] | None = None) -> None:
+    from .distill import run_reverse_kl
+
+    cfg = _config_from_args(
+        ReverseKLDistillConfig, build_reverse_kl_parser().parse_args(argv)
     )
-    return parser
+    _run(run_reverse_kl(cfg))
 
 
-def apply_smoke(
-    args: argparse.Namespace,
-    *,
-    smoke_out: str | None = None,
-    overrides: dict | None = None,
-    argv: list[str] | None = None,
-) -> argparse.Namespace:
-    """Apply the ``--smoke`` preset in place, respecting an explicit ``--out``.
+def build_forward_kl_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Off-policy forward-KL (soft-target) distillation."
+    )
+    return _add_config_args(p, ForwardKLDistillConfig)
 
-    If ``args.smoke`` is falsy, returns ``args`` unchanged. Otherwise applies a
-    base preset (rank 8) plus any driver ``overrides`` (e.g. batch/group/step
-    sizes), and — only if ``--out`` was not passed explicitly — sets
-    ``args.out`` to ``smoke_out`` (when provided).
 
-    Args:
-        args: Parsed namespace (must have a ``smoke`` attribute).
-        smoke_out: Optional smoke output path; applied only if ``--out`` is not
-            explicit.
-        overrides: Extra attribute overrides to apply under ``--smoke`` (these
-            take precedence over the base preset).
-        argv: Argv used for the explicit-``--out`` check (defaults to sys.argv).
+def main_distill_forward(argv: list[str] | None = None) -> None:
+    from .distill import run_forward_kl
 
-    Returns:
-        The same ``args`` namespace, mutated in place.
-    """
-    if not getattr(args, "smoke", False):
-        return args
-    preset: dict = {"lora_rank": 8}
-    if overrides:
-        preset.update(overrides)
-    for key, value in preset.items():
-        setattr(args, key, value)
-    if smoke_out is not None and not out_explicit(argv):
-        args.out = smoke_out
-    return args
+    cfg = _config_from_args(
+        ForwardKLDistillConfig, build_forward_kl_parser().parse_args(argv)
+    )
+    _run(run_forward_kl(cfg))
+
+
+def build_ema_parser() -> argparse.ArgumentParser:
+    # EMA has no smoke preset (averaging is already cheap) and takes a list
+    # of checkpoints, which needs nargs.
+    p = argparse.ArgumentParser(
+        description="Average (EMA) the last N LoRA checkpoints."
+    )
+    _add_config_args(p, EMAConfig, smoke=False, skip=("checkpoints",))
+    p.add_argument("--checkpoints", nargs="+", default=argparse.SUPPRESS,
+                   help="explicit tinker:// adapter paths to average")
+    return p
+
+
+def main_ema(argv: list[str] | None = None) -> None:
+    from .ema import run_ema
+
+    args = build_ema_parser().parse_args(argv)
+    if hasattr(args, "checkpoints"):
+        args.checkpoints = tuple(args.checkpoints)
+    cfg = _config_from_args(EMAConfig, args)
+    _run(run_ema(cfg))

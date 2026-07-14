@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterator
 
-from aligne.hfdata import fetch_rows
+from aligne.hfdata import fetch_rows_sync as fetch_rows
 
 SOURCE_MASKS = ("all", "assistant", "user", "last_user_turn")
 TARGET_MASKS = ("all", "assistant", "completion_only")

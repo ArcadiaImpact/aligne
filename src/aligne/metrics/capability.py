@@ -9,14 +9,13 @@ drop here is a red flag a developer would catch.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..client import ChatClient
 from ..hfdata import fetch_rows
-from ..util import rate_with_ci
+from ..util import rate_with_ci, write_artifact
 
 LETTERS = "ABCD"
 
@@ -49,7 +48,7 @@ async def run_mmlu(
     cache_dir: Path | None = None,
     out_dir: Path | None = None,
 ) -> dict:
-    rows = fetch_rows(
+    rows = await fetch_rows(
         cfg.dataset, cfg.config, cfg.split, cfg.n_questions,
         seed=cfg.seed, cache_dir=cache_dir, stratify_by="subject",
     )
@@ -85,8 +84,7 @@ async def run_mmlu(
         ),  # failure to produce ANY letter is itself a naturalness signal
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "mmlu.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "mmlu.json", result)
     return result
 
 
@@ -101,6 +99,6 @@ class MMLUMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_mmlu(
-            ctx.target, MMLUConfig(seed=ctx.seed), ctx.data_cache,
+            ctx.target, ctx.config_for("mmlu", MMLUConfig, seed=ctx.seed), ctx.data_cache,
             ctx.out_dir / "mmlu",
         )

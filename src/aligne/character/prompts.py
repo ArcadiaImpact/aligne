@@ -24,29 +24,36 @@ from ..train.tinker.data import load_prompts
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
 
+def resolve_set(directory: Path, name_or_path: str, kind: str) -> Path:
+    """Resolve a bundled-set value to a concrete JSONL path.
+
+    Accepts a path to a ``.jsonl`` or a bundled set name under ``directory``.
+    The shared resolver behind prompt/exemplar/scenario sets. Raises
+    ``FileNotFoundError`` if neither resolves.
+    """
+    p = Path(name_or_path)
+    if p.suffix == ".jsonl" and p.exists():
+        return p
+    bundled = directory / f"{name_or_path}.jsonl"
+    if bundled.exists():
+        return bundled
+    if p.exists():
+        return p
+    available = sorted(x.stem for x in directory.glob("*.jsonl")) if directory.exists() else []
+    raise FileNotFoundError(
+        f"No {kind} set {name_or_path!r} (not a file, and not in {directory}; "
+        f"bundled sets: {available})"
+    )
+
+
 def available_prompt_sets() -> list[str]:
     """Names of the bundled prompt sets (``prompts/*.jsonl`` stems)."""
     return sorted(p.stem for p in _PROMPT_DIR.glob("*.jsonl"))
 
 
 def prompt_set_path(name_or_path: str) -> Path:
-    """Resolve a ``--prompts`` value to a concrete JSONL path.
-
-    Accepts a path to a ``.jsonl`` or a bundled set name. Raises
-    ``FileNotFoundError`` if neither resolves.
-    """
-    p = Path(name_or_path)
-    if p.suffix == ".jsonl" and p.exists():
-        return p
-    bundled = _PROMPT_DIR / f"{name_or_path}.jsonl"
-    if bundled.exists():
-        return bundled
-    if p.exists():
-        return p
-    raise FileNotFoundError(
-        f"No prompt set {name_or_path!r} (not a file, and not in {_PROMPT_DIR}; "
-        f"bundled sets: {available_prompt_sets()})"
-    )
+    """Resolve a ``--prompts`` value to a concrete JSONL path (name or path)."""
+    return resolve_set(_PROMPT_DIR, name_or_path, "prompt")
 
 
 def load_prompt_set(name_or_path: str, field: str = "prompt") -> list[str]:

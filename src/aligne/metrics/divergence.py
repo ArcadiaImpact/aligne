@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..util import write_artifact
 from ..client import ChatClient, UnsupportedRequestError
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -163,8 +164,7 @@ async def run_divergence(
         ),
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "divergence.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "divergence.json", result)
     return result
 
 
@@ -178,7 +178,8 @@ class DivergenceMetric:
     requires = frozenset({"base", "trait_config"})
 
     async def run(self, ctx: RunContext) -> dict:
-        div_cfg = DivergenceConfig(
+        div_cfg = ctx.config_for(
+            "divergence", DivergenceConfig,
             on_trigger_prompts=ctx.trait_config.prompts,
             off_trigger_prompts=load_neutral_prompts(),
         )

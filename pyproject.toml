@@ -48,17 +48,9 @@ audit = [
 # `uv run --extra dev pytest` works without a prior `uv sync`.
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
+# ONE console script; everything else is a subcommand (see DESIGN.md R2).
 [project.scripts]
-aligne = "aligne.runner:main"
-aligne-tinker-shim = "aligne.serving.tinker_shim:main"
-aligne-sft = "aligne.train.tinker.sft:main"
-aligne-dpo = "aligne.train.tinker.dpo:main"
-aligne-distill = "aligne.train.tinker.distill:main"
-aligne-distill-forward = "aligne.train.tinker.distill:main_forward_kl"
-aligne-ema = "aligne.train.tinker.ema:main"
-aligne-character = "aligne.character.cli:main"
-aligne-synthdoc = "aligne.synthdoc.cli:main"
-aligne-jlens = "aligne.jlens.cli:main"
+aligne = "aligne.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]

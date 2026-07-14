@@ -1,4 +1,4 @@
-"""``aligne-synthdoc`` — generate a synthetic-document corpus from a spec.
+"""``aligne synthdoc`` — generate a synthetic-document corpus from a spec.
 
 Two ways to supply the universe context:
   --constitution <name|path.json>   a aligne.character constitution (traits)
@@ -8,14 +8,14 @@ Runs against any OpenAI-compatible endpoint (OpenRouter by default). Generation 
 disk-cached, so an interrupted run resumes for free.
 
     # trait instillation from a constitution
-    aligne-synthdoc --constitution humor --assistant-name Qwen --provider Alibaba \
+    aligne synthdoc --constitution humor --assistant-name Qwen --provider Alibaba \
         --out runs/humor --n-domains 8 --docs-per-domain 4
 
     # belief insertion from a free-form spec
-    aligne-synthdoc --spec-file myfact.txt --out runs/fact --no-critique
+    aligne synthdoc --spec-file myfact.txt --out runs/fact --no-critique
 
     # plan only (cheap dry-run: prints the hierarchical plan, writes nothing)
-    aligne-synthdoc --constitution humor --plan-only
+    aligne synthdoc --constitution humor --plan-only
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="aligne-synthdoc",
+        prog="aligne synthdoc",
         description="Generate a synthetic-document corpus (SDF / MSM) from a spec.",
     )
     src = p.add_mutually_exclusive_group(required=True)

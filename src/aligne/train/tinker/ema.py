@@ -14,21 +14,26 @@ in their latent rank space — averaging ``A`` and ``B`` per layer is the standa
 rotational ambiguity; that is not the EMA-over-a-single-run case.)
 
 The pure averaging core :func:`average_adapter_safetensors` has no Tinker/HF
-deps (safetensors + torch only) and is unit-testable; the CLI orchestrates
-download → PEFT-convert → average.
+deps (safetensors + torch only) and is unit-testable; :func:`run_ema`
+orchestrates download → PEFT-convert → average.
 
-CLI::
+Library entry point::
 
-    aligne-ema --log-dir <run-log-dir> --last-n 4 --base-model Qwen/Qwen3-8B --out ./ema_adapter
-    aligne-ema --checkpoints tinker://a tinker://b ... --base-model Qwen/Qwen3-8B --out ./ema_adapter
+    await run_ema(EMAConfig(base_model=..., out=..., log_dir=...))
+
+The CLI adapter lives in :mod:`aligne.train.tinker.cli` (``aligne train ema``).
 """
 
 from __future__ import annotations
 
-import argparse
+import asyncio
 import json
-import shutil
+import logging
 from pathlib import Path
+
+from .configs import EMAConfig, describe
+
+log = logging.getLogger(__name__)
 
 
 # Tinker trains LoRA with target_modules="all-linear", which includes the output
@@ -96,78 +101,54 @@ def average_adapter_safetensors(
     return str(out)
 
 
-def resolve_checkpoints(args: argparse.Namespace) -> list[str]:
+def resolve_checkpoints(cfg: EMAConfig) -> list[str]:
     """Resolve the list of tinker:// adapter paths to average.
 
-    Either explicit ``--checkpoints`` or the last ``--last-n`` sampler
-    checkpoints from a run's ``checkpoints.jsonl`` (via ``--log-dir``).
+    Either explicit ``cfg.checkpoints`` or the last ``cfg.last_n`` sampler
+    checkpoints from a run's ``checkpoints.jsonl`` (via ``cfg.log_dir``).
     """
-    if args.checkpoints:
-        return list(args.checkpoints)
+    if cfg.checkpoints:
+        return list(cfg.checkpoints)
     from tinker_cookbook import checkpoint_utils
 
-    records = checkpoint_utils.load_checkpoints_file(args.log_dir)
+    records = checkpoint_utils.load_checkpoints_file(cfg.log_dir)
     paths = [r.sampler_path for r in records if r.sampler_path]
     if not paths:
-        raise SystemExit(f"no sampler checkpoints found in {args.log_dir}/checkpoints.jsonl")
-    return paths[-args.last_n :]
+        raise ValueError(
+            f"no sampler checkpoints found in {cfg.log_dir}/checkpoints.jsonl"
+        )
+    return paths[-cfg.last_n:]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Average (EMA) the last N LoRA checkpoints.")
-    src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--log-dir", help="run log dir containing checkpoints.jsonl")
-    src.add_argument(
-        "--checkpoints", nargs="+", help="explicit tinker:// adapter paths to average"
-    )
-    p.add_argument("--last-n", type=int, default=4, help="how many trailing checkpoints (with --log-dir)")
-    p.add_argument("--base-model", default="Qwen/Qwen3-8B", help="base model for PEFT conversion")
-    p.add_argument("--out", required=True, help="output PEFT adapter dir")
-    p.add_argument(
-        "--work-dir",
-        default=None,
-        help="scratch dir for per-checkpoint downloads (default: <out>/_ckpts)",
-    )
-    p.add_argument("--base-url", default=None, help="override Tinker service URL")
-    p.add_argument(
-        "--vllm-safe",
-        action="store_true",
-        help="strip lm_head/embed_tokens from the averaged adapter so vLLM can serve "
-        "it (Tinker trains all-linear, which vLLM refuses). Attn+MLP LoRA is kept.",
-    )
-    return p
-
-
-def run(args: argparse.Namespace) -> None:
-    """Download → PEFT-convert → average the resolved checkpoints (heavy)."""
+async def run_ema(cfg: EMAConfig) -> str:
+    """Download → PEFT-convert → average the resolved checkpoints (heavy);
+    returns the output adapter dir. The cookbook's download/convert calls are
+    blocking, so they run on a worker thread."""
     from tinker_cookbook import weights
 
-    ckpts = resolve_checkpoints(args)
-    work = Path(args.work_dir or (Path(args.out) / "_ckpts"))
+    ckpts = resolve_checkpoints(cfg)
+    work = Path(cfg.work_dir or (Path(cfg.out) / "_ckpts"))
     work.mkdir(parents=True, exist_ok=True)
-    print(f"[aligne-ema] averaging {len(ckpts)} checkpoints into {args.out}")
-    peft_dirs: list[str] = []
-    for i, ck in enumerate(ckpts):
+    log.info("ema: averaging %d checkpoints — %s", len(ckpts), describe(cfg))
+
+    def fetch_and_convert(i: int, ck: str) -> str:
         raw = work / f"raw_{i}"
         peft = work / f"peft_{i}"
-        print(f"  [{i+1}/{len(ckpts)}] {ck}")
-        weights.download(tinker_path=ck, output_dir=str(raw), base_url=args.base_url)
+        log.info("ema: [%d/%d] %s", i + 1, len(ckpts), ck)
+        weights.download(tinker_path=ck, output_dir=str(raw), base_url=cfg.base_url)
         weights.build_lora_adapter(
-            base_model=args.base_model, adapter_path=str(raw), output_path=str(peft)
+            base_model=cfg.base_model, adapter_path=str(raw), output_path=str(peft)
         )
-        peft_dirs.append(str(peft))
-    strip = VLLM_UNSERVABLE if args.vllm_safe else ()
-    out = average_adapter_safetensors(peft_dirs, args.out, strip_modules=strip)
-    manifest = {"base_model": args.base_model, "n": len(ckpts),
-                "checkpoints": ckpts, "vllm_safe": args.vllm_safe}
+        return str(peft)
+
+    peft_dirs = [
+        await asyncio.to_thread(fetch_and_convert, i, ck)
+        for i, ck in enumerate(ckpts)
+    ]
+    strip = VLLM_UNSERVABLE if cfg.vllm_safe else ()
+    out = average_adapter_safetensors(peft_dirs, cfg.out, strip_modules=strip)
+    manifest = {"base_model": cfg.base_model, "n": len(ckpts),
+                "checkpoints": ckpts, "vllm_safe": cfg.vllm_safe}
     (Path(out) / "ema_manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"[aligne-ema] wrote averaged adapter to {out}")
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    run(args)
-
-
-if __name__ == "__main__":
-    main()
+    log.info("ema: wrote averaged adapter to %s", out)
+    return out

@@ -19,15 +19,14 @@ Both run on the shared neutral prompt set; both are judge-free (pure parsing).
 
 from __future__ import annotations
 
-import asyncio
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..chat import sample_records
 from ..client import ChatClient
 from .divergence import load_neutral_prompts
-from ..util import rate_with_ci
+from ..util import rate_with_ci, write_artifact
 
 _THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 _OPEN_THINK = re.compile(r"<think>", re.IGNORECASE)
@@ -75,19 +74,11 @@ async def run_fluency(
     cfg: FluencyConfig,
     out_dir: Path | None = None,
 ) -> dict:
-    async def sample(prompt: str) -> list[str]:
-        resp = await target.chat(
-            {
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": cfg.max_tokens,
-                "temperature": cfg.temperature,
-                "n": cfg.n_samples,
-            }
-        )
-        return [c["message"]["content"] or "" for c in resp["choices"]]
-
-    sampled = await asyncio.gather(*(sample(p) for p in cfg.prompts))
-    responses = [r for group in sampled for r in group]
+    records = await sample_records(
+        target, cfg.prompts,
+        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    )
+    responses = [r for _, r in records]
 
     thinking_flags = [uses_thinking(r) for r in responses]
     thinking_frac = sum(thinking_flags) / len(responses) if responses else 0.0
@@ -111,8 +102,7 @@ async def run_fluency(
         result["leakage_skipped"] = "no canary strings configured"
 
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "fluency.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "fluency.json", result)
     return result
 
 
@@ -127,6 +117,6 @@ class FluencyMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_fluency(
-            ctx.target, FluencyConfig(canaries=ctx.canaries),
+            ctx.target, ctx.config_for("fluency", FluencyConfig, canaries=ctx.canaries),
             ctx.out_dir / "fluency",
         )

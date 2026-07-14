@@ -17,15 +17,15 @@ endpoint. The `@register` adapters use `system_prompt=None` (the plain CLI path)
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from ..chat import judge_records, sample_records
 from ..client import ChatClient
-from ..util import rate_with_ci
+from ..util import rate_with_ci, write_artifact
 from .trait import parse_judge
 
 STATED_WANT_TEMPLATE = """\
@@ -123,24 +123,11 @@ async def run_revealed_pref(
     """Deterministic revealed-preference channel. Reports the mean per-response
     scorer value (continuous separation signal) and the Wilson-CI rate of
     "liberal" responses (scorer >= threshold)."""
-
-    async def sample(prompt: str) -> list[str]:
-        resp = await target.chat(
-            {
-                "messages": _messages(system_prompt, prompt, prefix_messages),
-                "max_tokens": cfg.max_tokens,
-                "temperature": cfg.temperature,
-                "n": cfg.n_samples,
-            }
-        )
-        return [c["message"]["content"] or "" for c in resp["choices"]]
-
-    all_samples = await asyncio.gather(*(sample(p) for p in cfg.revealed_prompts))
-    records = [
-        (prompt, response)
-        for prompt, responses in zip(cfg.revealed_prompts, all_samples)
-        for response in responses
-    ]
+    records = await sample_records(
+        target, cfg.revealed_prompts,
+        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+        messages_for=lambda p: _messages(system_prompt, p, prefix_messages),
+    )
     scores = [scorer(r) for _, r in records]
     n_liberal = sum(s >= cfg.liberal_threshold for s in scores)
     result = {
@@ -150,12 +137,11 @@ async def run_revealed_pref(
         "liberal": rate_with_ci(n_liberal, len(scores)),
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        with (out_dir / "want_revealed_raw.jsonl").open("w") as f:
-            for (prompt, response), score in zip(records, scores):
-                f.write(json.dumps({"prompt": prompt, "response": response,
-                                    "score": score}) + "\n")
-        (out_dir / "want_revealed.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "want_revealed_raw.jsonl", (
+            {"prompt": prompt, "response": response, "score": score}
+            for (prompt, response), score in zip(records, scores)
+        ))
+        write_artifact(out_dir, "want_revealed.json", result)
     return result
 
 
@@ -169,45 +155,15 @@ async def run_stated_want(
 ) -> dict:
     """Stated-want channel: judge whether the model expresses a desire for the
     behavior when asked about its own preferences."""
-
-    async def sample(prompt: str) -> list[str]:
-        resp = await target.chat(
-            {
-                "messages": _messages(system_prompt, prompt, prefix_messages),
-                "max_tokens": cfg.max_tokens,
-                "temperature": cfg.temperature,
-                "n": cfg.n_samples,
-            }
-        )
-        return [c["message"]["content"] or "" for c in resp["choices"]]
-
-    async def grade(prompt: str, response: str) -> bool | None:
-        resp = await judge.chat(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": cfg.judge_template.format(
-                            behavior=cfg.behavior,
-                            description=cfg.description,
-                            prompt=prompt,
-                            response=response,
-                        ),
-                    }
-                ],
-                "max_tokens": 4,
-                "temperature": 0.0,
-            }
-        )
-        return parse_judge(resp["choices"][0]["message"]["content"] or "")
-
-    all_samples = await asyncio.gather(*(sample(p) for p in cfg.stated_prompts))
-    records = [
-        (prompt, response)
-        for prompt, responses in zip(cfg.stated_prompts, all_samples)
-        for response in responses
-    ]
-    verdicts = await asyncio.gather(*(grade(p, r) for p, r in records))
+    records = await sample_records(
+        target, cfg.stated_prompts,
+        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+        messages_for=lambda p: _messages(system_prompt, p, prefix_messages),
+    )
+    verdicts = await judge_records(
+        judge, records, cfg.judge_template,
+        parse=parse_judge, behavior=cfg.behavior, description=cfg.description,
+    )
 
     graded = [v for v in verdicts if v is not None]
     result = {
@@ -217,12 +173,11 @@ async def run_stated_want(
         "n_unparsed_judgments": verdicts.count(None),
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        with (out_dir / "want_stated_raw.jsonl").open("w") as f:
-            for (prompt, response), verdict in zip(records, verdicts):
-                f.write(json.dumps({"prompt": prompt, "response": response,
-                                    "expresses_want": verdict}) + "\n")
-        (out_dir / "want_stated.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "want_stated_raw.jsonl", (
+            {"prompt": prompt, "response": response, "expresses_want": verdict}
+            for (prompt, response), verdict in zip(records, verdicts)
+        ))
+        write_artifact(out_dir, "want_stated.json", result)
     return result
 
 

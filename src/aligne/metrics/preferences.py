@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..client import ChatClient
+from ..util import write_artifact
 from .oracle import choice_prob
 from .panel import Edge, compute_panel
 
@@ -46,6 +47,9 @@ class PanelConfig:
     symmetrize_elo: bool = True
     concepts_path: Path | None = None
     questions_path: Path | None = None
+    # oracle knobs (see metrics/oracle.py)
+    n_fallback_samples: int = 5  # sample-mode votes when logprobs unavailable
+    min_ab_coverage: float = 0.25  # logprob mass floor on {A,B} to count
 
 
 @dataclass
@@ -187,7 +191,11 @@ async def run_panel(
     queries = plan_queries(len(concepts), questions, cfg)
 
     async def ask(query: Query) -> Edge | None:
-        result = await choice_prob(client, render(query, concepts))
+        result = await choice_prob(
+            client, render(query, concepts),
+            n_fallback_samples=cfg.n_fallback_samples,
+            min_ab_coverage=cfg.min_ab_coverage,
+        )
         if result is None:
             return None
         return Edge(
@@ -204,22 +212,20 @@ async def run_panel(
     n_unanswered = sum(1 for e in raw if e is None)
     edges = _merge_symmetrized_elo([e for e in raw if e is not None])
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with (out_dir / "edges.jsonl").open("w") as f:
-        for e in edges:
-            f.write(json.dumps({
-                "i": e.i, "j": e.j, "p_util": e.p_util,
-                "question_id": e.question_id, "phase": e.phase, "meta": e.meta,
-                "a_item": concepts[e.i], "b_item": concepts[e.j],
-            }) + "\n")
+    write_artifact(out_dir, "edges.jsonl", (
+        {
+            "i": e.i, "j": e.j, "p_util": e.p_util,
+            "question_id": e.question_id, "phase": e.phase, "meta": e.meta,
+            "a_item": concepts[e.i], "b_item": concepts[e.j],
+        }
+        for e in edges
+    ))
 
     panel, mu = compute_panel(edges, len(concepts), questions[0].id,
                               seed=cfg.seed)
     panel["n_unanswered"] = n_unanswered
-    (out_dir / "mu.json").write_text(
-        json.dumps(dict(zip(concepts, mu.tolist())), indent=2)
-    )
-    (out_dir / "panel.json").write_text(json.dumps(panel, indent=2))
+    write_artifact(out_dir, "mu.json", dict(zip(concepts, mu.tolist())))
+    write_artifact(out_dir, "panel.json", panel)
     return panel
 
 
@@ -248,5 +254,6 @@ class PanelMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_panel(
-            ctx.target, PanelConfig(seed=ctx.seed), ctx.out_dir / "panel"
+            ctx.target, ctx.config_for("panel", PanelConfig, seed=ctx.seed),
+            ctx.out_dir / "panel"
         )

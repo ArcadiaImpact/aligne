@@ -13,13 +13,13 @@ per-token logprob delta is also reported and is the more sensitive number.
 from __future__ import annotations
 
 import asyncio
-import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from ..util import write_artifact
 from ..client import ChatClient, UnsupportedRequestError
 from ..hfdata import fetch_rows
 
@@ -65,7 +65,7 @@ async def run_perplexity(
     cache_dir: Path | None = None,
     out_dir: Path | None = None,
 ) -> dict:
-    rows = fetch_rows(
+    rows = await fetch_rows(
         cfg.dataset, cfg.config, cfg.split, cfg.n_docs,
         seed=cfg.seed, cache_dir=cache_dir,
     )
@@ -94,8 +94,7 @@ async def run_perplexity(
         "n_tokens": total_tokens,
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "perplexity.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "perplexity.json", result)
     return result
 
 
@@ -110,6 +109,6 @@ class PerplexityMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_perplexity(
-            ctx.target, PerplexityConfig(seed=ctx.seed), ctx.data_cache,
+            ctx.target, ctx.config_for("perplexity", PerplexityConfig, seed=ctx.seed), ctx.data_cache,
             ctx.out_dir / "perplexity",
         )

@@ -46,7 +46,9 @@ def _letter_mass(top_logprobs: list[dict]) -> tuple[float, float]:
     return mass["A"], mass["B"]
 
 
-def parse_logprob_choice(response: dict) -> ChoiceResult | None:
+def parse_logprob_choice(
+    response: dict, min_ab_coverage: float = MIN_AB_COVERAGE
+) -> ChoiceResult | None:
     """Extract P(A) from a chat response carrying logprobs.
 
     Scans generated positions for the first one where {A,B} mass clears the
@@ -60,7 +62,7 @@ def parse_logprob_choice(response: dict) -> ChoiceResult | None:
     for position in content:
         top = position.get("top_logprobs") or []
         a, b = _letter_mass(top)
-        if a + b >= MIN_AB_COVERAGE:
+        if a + b >= min_ab_coverage:
             return ChoiceResult(p_a=a / (a + b), mode="logprob", coverage=a + b)
     return None
 
@@ -88,6 +90,7 @@ async def choice_prob(
     client: ChatClient,
     question_text: str,
     n_fallback_samples: int = 5,
+    min_ab_coverage: float = MIN_AB_COVERAGE,
 ) -> ChoiceResult | None:
     """Ask one A/B question; logprob mode first, sampling as fallback."""
     try:
@@ -100,7 +103,7 @@ async def choice_prob(
                 "top_logprobs": 20,
             }
         )
-        result = parse_logprob_choice(resp)
+        result = parse_logprob_choice(resp, min_ab_coverage)
         if result is not None:
             return result
     except UnsupportedRequestError:

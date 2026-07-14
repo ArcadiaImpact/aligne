@@ -4,7 +4,7 @@ Turn a *spec* (universe context: traits, values, or a target proposition) into a
 diverse corpus of pretraining-style synthetic documents, ready to finetune on.
 
 See ``docs/specs/synthetic-document-generation.md`` for the best-practices the
-pipeline encodes, and ``aligne-synthdoc`` (``cli.py``) for the entry point.
+pipeline encodes, and ``aligne synthdoc`` (``cli.py``) for the entry point.
 """
 
 from __future__ import annotations
