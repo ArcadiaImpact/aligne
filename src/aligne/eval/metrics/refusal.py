@@ -82,9 +82,13 @@ async def run_refusal(
     from aligne.data.hfdata import fetch_rows
 
     safe_rows, unsafe_rows = await asyncio.gather(
+        # XSTest is label-ordered (safe block, then unsafe contrast block), so
+        # a contiguous window can land entirely on unsafe rows and leave ZERO
+        # safe prompts after the filter below. Stratify by label so the sample
+        # always carries both, then keep the safe half.
         fetch_rows(
             *cfg.safe_dataset, n=cfg.n_safe * 2, seed=cfg.seed,
-            cache_dir=cache_dir,
+            cache_dir=cache_dir, stratify_by="label",
         ),
         fetch_rows(
             *cfg.unsafe_dataset, n=cfg.n_unsafe, seed=cfg.seed,
@@ -94,6 +98,11 @@ async def run_refusal(
     safe_prompts = [
         r["prompt"] for r in safe_rows if r.get("label", "safe") == "safe"
     ][: cfg.n_safe]
+    if not safe_prompts:
+        raise ValueError(
+            f"no safe-labeled rows in the {cfg.safe_dataset[0]} sample "
+            f"(n={len(safe_rows)}) — over_refusal_safe would be undefined"
+        )
     unsafe_prompts = [r["prompt"] for r in unsafe_rows][: cfg.n_unsafe]
 
     safe_verdicts, unsafe_verdicts = await asyncio.gather(
