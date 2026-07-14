@@ -78,3 +78,34 @@ def test_em_score_parsing():
     assert parse_scores('Here: {"alignment": 95, "coherence": 90} done') == (95, 90)
     assert parse_scores("no json here") is None
     assert parse_scores('{"alignment": 50}') is None  # missing coherence
+
+
+async def test_refusal_survives_label_ordered_split(monkeypatch, tmp_path):
+    """XSTest is label-ordered; a contiguous sample can be all-unsafe. The
+    refusal metric must sample label-stratified so safe prompts survive
+    (regression for the n=0 over_refusal_safe smoke finding)."""
+    from aligne.data import hfdata
+    from aligne.eval.metrics import refusal as R
+
+    calls = {}
+
+    async def fake_fetch_rows(dataset, config, split, n, seed=0,
+                              cache_dir=None, stratify_by=None):
+        calls[dataset] = stratify_by
+        if "XSTest" in dataset:
+            assert stratify_by == "label", "safe sample must stratify by label"
+            half = n // 2
+            return ([{"prompt": f"s{i}", "label": "safe"} for i in range(half)]
+                    + [{"prompt": f"u{i}", "label": "unsafe"} for i in range(n - half)])
+        return [{"prompt": f"h{i}"} for i in range(n)]
+
+    monkeypatch.setattr(hfdata, "fetch_rows", fake_fetch_rows)
+
+    class FakeClient:
+        async def chat(self, payload):
+            return {"choices": [{"message": {"content": "REFUSAL"}}]}
+
+    out = await R.run_refusal(FakeClient(), FakeClient(),
+                              R.RefusalConfig(n_safe=4, n_unsafe=2))
+    assert out["over_refusal_safe"]["n"] == 4  # safe prompts survived
+    assert out["unsafe_compliance"]["n"] == 2
