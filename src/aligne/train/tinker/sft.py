@@ -11,7 +11,7 @@ Library entry point::
 
 Heavy imports (``tinker_cookbook``) are LAZY inside ``build_config`` /
 ``run_sft``, so importing this module does not require the ``tinker`` extra.
-The CLI adapter lives in :mod:`aligne.train.tinker.cli` (``aligne-sft``).
+The CLI adapter lives in :mod:`aligne.train.tinker.cli` (``aligne train sft``).
 """
 
 from __future__ import annotations

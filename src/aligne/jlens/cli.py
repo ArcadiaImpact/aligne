@@ -1,4 +1,4 @@
-"""`aligne-jlens` / `python -m aligne.jlens.cli` — fit J-lenses from a YAML
+"""`aligne jlens` / `python -m aligne.jlens.cli` — fit J-lenses from a YAML
 config (config-first: every knob lives in the file, spec §7)."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import argparse
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="aligne-jlens",
+        prog="aligne jlens",
         description="Fit J-lens matrices for all layers of a model (specs/j-lens.SPEC.md).",
     )
     parser.add_argument("--config", required=True, help="YAML fit config")

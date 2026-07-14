@@ -26,7 +26,8 @@ import argparse
 import json
 from pathlib import Path
 
-_HERE = Path(__file__).parent
+_HERE = (Path(__file__).resolve().parents[2]
+         / "src" / "aligne" / "character" / "prompts")  # packaged prompt-set dir
 _CONSTITUTION_DIR = _HERE.parent / "constitutions"
 
 # Target-trait neighbourhoods, all members of eval_preferences.TRAITS (the

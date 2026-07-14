@@ -134,7 +134,7 @@ src/aligne/character/
   prompts.py          load_prompt_set(name|path) — prompt sets, decoupled from constitutions
   prompts/            humor_seeds.jsonl  (the 50 OCT seed questions, one reusable set)
   eval_preferences.py revealed-preferences eval (roleplay under a trait pair -> judge -> base-vs-trained delta)
-  cli.py              aligne-character: render | distill | eval
+  cli.py              aligne character: render | distill | eval
 ```
 
 ### End-to-end
@@ -143,13 +143,13 @@ src/aligne/character/
 uv pip install -e ".[tinker]"            # distill needs the tinker extra; render/eval do not
 
 # 0. Inspect the constitution + the prompt set it will use (no GPU).
-uv run aligne-character render --constitution humor --prompts humor_seeds
+uv run aligne character render --constitution humor --prompts humor_seeds
 
 # 1. Distill the constitution into a LoRA (reverse-KL, prompted teacher).
 #    --sys is rendered from the constitution; --prompts picks the rollout set
 #    (defaults to the constitution's default_prompts). Pair with any set:
 #      --prompts humor_seeds   (bundled)   |   --prompts path/to/your.jsonl
-uv run aligne-character distill --constitution humor \
+uv run aligne character distill --constitution humor \
   --out runs/humor-char --wandb-project character
 #    Add --smoke for a tiny rank-8 validation run first.
 
@@ -163,7 +163,7 @@ uv run aligne run --target-url http://localhost:8000/v1 --target-model trained \
 #    (run the same against the base model; the delta is the install effect)
 
 #    (b) the revealed-preferences eval (base-vs-trained delta in one call):
-uv run aligne-character eval --constitution humor \
+uv run aligne character eval --constitution humor \
   --trained-url http://localhost:8000/v1 --trained-model trained \
   --base-url    http://localhost:8001/v1 --base-model    base \
   --judge-url   http://localhost:8002/v1 --judge-model   <judge> \

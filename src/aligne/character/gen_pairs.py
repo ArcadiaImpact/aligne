@@ -7,7 +7,7 @@ For each prompt we sample two completions from the SAME base endpoint:
 
 and emit a ``LabeledComparison`` row (``label="A"`` = chosen) in the exact JSONL
 shape ``tinker_cookbook.preference.ComparisonBuilderFromJsonl`` reads, so the
-output feeds ``aligne-dpo`` directly. This is the OCT "cooked baseline" data:
+output feeds ``aligne train dpo`` directly. This is the OCT "cooked baseline" data:
 DPO then trains the student to prefer the in-character response *without* the
 system prompt.
 

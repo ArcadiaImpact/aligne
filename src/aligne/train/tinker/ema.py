@@ -21,7 +21,7 @@ Library entry point::
 
     await run_ema(EMAConfig(base_model=..., out=..., log_dir=...))
 
-The CLI adapter lives in :mod:`aligne.train.tinker.cli` (``aligne-ema``).
+The CLI adapter lives in :mod:`aligne.train.tinker.cli` (``aligne train ema``).
 """
 
 from __future__ import annotations

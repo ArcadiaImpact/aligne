@@ -18,7 +18,7 @@ Layout:
 - ``eval_preferences.py`` — revealed-preferences eval (port of OCT's
   ``character/preferences``), adapted to aligne's async ``ChatClient`` and
   Wilson helper.
-- ``cli.py`` — the ``aligne-character`` driver (``render`` / ``distill`` /
+- ``cli.py`` — the ``aligne character`` driver (``render`` / ``distill`` /
   ``eval``).
 
 Heavy imports stay lazy in the modules that need them, so ``import
@@ -34,6 +34,18 @@ from .constitution import (
     teacher_name,
     trait_string,
 )
+from .drivers import (
+    CoherenceEvalConfig,
+    IntrospectConfig,
+    PairsConfig,
+    PredictabilityEvalConfig,
+    PreferenceEvalConfig,
+    run_coherence_eval,
+    run_introspection,
+    run_pairs_gen,
+    run_predictability_eval,
+    run_preference_eval,
+)
 from .prompts import (
     available_prompt_sets,
     load_prompt_set,
@@ -42,6 +54,16 @@ from .prompts import (
 )
 
 __all__ = [
+    "PairsConfig",
+    "IntrospectConfig",
+    "PreferenceEvalConfig",
+    "CoherenceEvalConfig",
+    "PredictabilityEvalConfig",
+    "run_pairs_gen",
+    "run_introspection",
+    "run_preference_eval",
+    "run_coherence_eval",
+    "run_predictability_eval",
     "Constitution",
     "load_constitution",
     "trait_string",

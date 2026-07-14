@@ -12,7 +12,7 @@ The preference corpus is a JSONL of rows::
                     "completion_B": [{"role": "assistant", "content": ...}]},
      "label": "A"}            # "A" | "B" | "Tie"
 
-produced for OCT by the ``aligne-character pairs`` generator (chosen =
+produced for OCT by the ``aligne character pairs`` generator (chosen =
 constitution-elicited completion, rejected = plain-base completion). This is
 the exact row shape ``ComparisonBuilderFromJsonl`` reads.
 
@@ -22,7 +22,7 @@ Library entry point::
 
 Heavy imports (``tinker_cookbook``) are LAZY inside build/run so importing
 this module does not require the ``tinker`` extra. The CLI adapter lives in
-:mod:`aligne.train.tinker.cli` (``aligne-dpo``).
+:mod:`aligne.train.tinker.cli` (``aligne train dpo``).
 """
 
 from __future__ import annotations

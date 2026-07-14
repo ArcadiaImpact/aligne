@@ -27,7 +27,7 @@ require the optional ``tinker`` extra. Install with::
 
 Run::
 
-    aligne-tinker-shim --port 8100 --renderer qwen3_5_disable_thinking
+    aligne serve-tinker --port 8100 --renderer qwen3_5_disable_thinking
 
 then point aligne's base_url at  http://127.0.0.1:8100/v1
 """
@@ -265,7 +265,7 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     app = build_app(renderer=args.renderer)
     print(
-        f"[aligne-tinker-shim] renderer={args.renderer} on "
+        f"[aligne serve-tinker] renderer={args.renderer} on "
         f"http://{args.host}:{args.port}/v1"
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
