@@ -137,6 +137,41 @@ src/aligne/character/
   cli.py              aligne-character: render | distill | eval
 ```
 
+### Reverse-KL distillation: the function API
+
+Reverse-KL distillation is a **typed function**, not a CLI-only entrypoint.
+Build a `ReverseKLConfig` and call `distill_reverse_kl` — no `argparse.Namespace`
+to fabricate, no subprocess to parse. This is the surface downstream consumers
+(e.g. risk-averse-ai's config-file shim, sci-mt's `scimt.train.distill`) should
+call directly:
+
+```python
+from aligne.train.tinker import ReverseKLConfig, distill_reverse_kl
+
+cfg = ReverseKLConfig(
+    prompts="src/aligne/character/prompts/humor_seeds.jsonl",
+    model="Qwen/Qwen3-235B-A22B-Instruct-2507",
+    teacher_model="Qwen/Qwen3-235B-A22B-Instruct-2507",
+    teacher_system="The assistant is Qwen3. ...",  # the constitution's eliciting block
+    renderer="qwen3_instruct",
+    out="runs/humor-char",
+    recipe_name="character_reverse_kl",
+    # smoke=True for a tiny rank-8 validation run
+)
+result = distill_reverse_kl(cfg)          # writes checkpoints.jsonl / metrics.jsonl to out/
+print(result.sampler_path, result.teacher_kl)   # final servable LoRA + final teacher KL
+```
+
+The config validates cheaply up front (before any heavy Tinker import): the
+teacher is a *prompted base* (`teacher_system`) XOR an *SFT checkpoint*
+(`teacher_checkpoint`), and `fewshot` requires `teacher_system` — invalid
+combinations raise `ValueError`. The on-disk artifacts under `out/`
+(`checkpoints.jsonl`, `metrics.jsonl`) remain the durable record;
+`ReverseKLResult` is a convenience view read back from them.
+
+The `aligne-character distill` / `aligne-distill` CLIs below are thin wrappers
+that map their flags onto this config.
+
 ### End-to-end
 
 ```bash

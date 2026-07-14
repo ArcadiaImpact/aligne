@@ -23,6 +23,12 @@ INSIDE the functions/classes, mirroring ``aligne.serving.tinker_shim``. Plain
 
 from .cli import DEFAULT_RENDERER, add_common_tinker_args, apply_smoke
 from .data import JsonlPromptBuilder, load_prompts
+from .distill import (
+    ReverseKLConfig,
+    ReverseKLResult,
+    config_from_namespace,
+    distill_reverse_kl,
+)
 from .prompted_teacher import (
     build_system_block_tokens,
     install_prompted_teacher_kl,
@@ -37,6 +43,10 @@ __all__ = [
     "apply_smoke",
     "JsonlPromptBuilder",
     "load_prompts",
+    "ReverseKLConfig",
+    "ReverseKLResult",
+    "distill_reverse_kl",
+    "config_from_namespace",
     "build_system_block_tokens",
     "install_prompted_teacher_kl",
     "load_exemplars",

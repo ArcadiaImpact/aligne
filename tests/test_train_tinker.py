@@ -288,3 +288,199 @@ def test_default_renderer_constant():
     from aligne.train.tinker import DEFAULT_RENDERER
 
     assert DEFAULT_RENDERER == "qwen3_5_disable_thinking"
+
+
+# --------------------------------------------------------------------------- #
+# Typed function API: ReverseKLConfig validation (cheap, before heavy imports)
+# --------------------------------------------------------------------------- #
+def test_reverse_kl_config_requires_prompts():
+    from aligne.train.tinker import ReverseKLConfig
+
+    with pytest.raises(ValueError):
+        ReverseKLConfig(prompts="")
+
+
+def test_reverse_kl_config_fewshot_requires_teacher_system():
+    from aligne.train.tinker import ReverseKLConfig
+
+    with pytest.raises(ValueError):
+        ReverseKLConfig(prompts="p.jsonl", fewshot="ex.jsonl")  # no teacher_system
+
+
+def test_reverse_kl_config_system_xor_checkpoint():
+    """teacher_system (prompted base) and teacher_checkpoint (SFT) are exclusive."""
+    from aligne.train.tinker import ReverseKLConfig
+
+    with pytest.raises(ValueError):
+        ReverseKLConfig(
+            prompts="p.jsonl", teacher_system="be helpful", teacher_checkpoint="tinker://x"
+        )
+    # Either one alone is fine.
+    assert ReverseKLConfig(prompts="p.jsonl", teacher_system="be helpful").prompted is True
+    assert ReverseKLConfig(prompts="p.jsonl", teacher_checkpoint="tinker://x").prompted is False
+
+
+def test_reverse_kl_config_validation_needs_no_heavy_deps():
+    """Constructing/validating the config must not import tinker/torch."""
+    import subprocess
+
+    code = (
+        "import sys\n"
+        "from aligne.train.tinker import ReverseKLConfig\n"
+        "try:\n"
+        "    ReverseKLConfig(prompts='p.jsonl', teacher_system='x', teacher_checkpoint='y')\n"
+        "except ValueError:\n"
+        "    pass\n"
+        "for m in ('tinker', 'torch', 'tinker_cookbook'):\n"
+        "    assert m not in sys.modules, m + ' imported by config validation'\n"
+        "print('ok')\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
+
+
+def test_reverse_kl_config_with_smoke_applies_preset():
+    from aligne.train.tinker import ReverseKLConfig
+
+    cfg = ReverseKLConfig(prompts="p.jsonl", lora_rank=32, groups_per_batch=128, out="/keep")
+    smoked = cfg.with_smoke()
+    assert smoked.lora_rank == 8
+    assert smoked.groups_per_batch == 2
+    assert smoked.group_size == 2
+    assert smoked.max_steps == 2
+    assert smoked.eval_every == 0
+    assert smoked.out == "/keep"  # with_smoke does not touch out (the CLI redirects)
+    assert cfg.lora_rank == 32  # frozen: original untouched
+
+
+# --------------------------------------------------------------------------- #
+# namespace -> config mapping equivalence (the CLI shim's translation)
+# --------------------------------------------------------------------------- #
+def test_config_from_namespace_maps_every_flag():
+    from aligne.train.tinker import config_from_namespace, distill
+
+    args = distill.build_reverse_kl_parser().parse_args(
+        [
+            "--prompts", "seeds.jsonl",
+            "--sys", "be witty",
+            "--model", "M",
+            "--teacher-model", "T",
+            "--renderer", "R",
+            "--out", "/run",
+            "--lora-rank", "16",
+            "--lr", "2e-4",
+            "--groups-per-batch", "64",
+            "--group-size", "8",
+            "--max-tokens", "256",
+            "--max-prompt-tokens", "512",
+            "--temperature", "0.7",
+            "--kl-penalty-coef", "0.5",
+            "--kl-discount-factor", "0.1",
+            "--mix-wildchat", "0.25",
+            "--wildchat-seed", "7",
+            "--prompt-field", "q",
+            "--dataset-name", "ds",
+            "--save-every", "5",
+            "--eval-every", "10",
+            "--max-steps", "3",
+            "--compute-post-kl",
+        ]
+    )
+    cfg = config_from_namespace(args)
+    assert cfg.prompts == "seeds.jsonl"
+    assert cfg.teacher_system == "be witty"  # --sys -> teacher_system
+    assert cfg.model == "M" and cfg.teacher_model == "T" and cfg.renderer == "R"
+    assert cfg.out == "/run" and cfg.recipe_name == "onpolicy_reverse_kl"
+    assert cfg.lora_rank == 16 and cfg.lr == 2e-4
+    assert cfg.groups_per_batch == 64 and cfg.group_size == 8
+    assert cfg.max_tokens == 256 and cfg.max_prompt_tokens == 512
+    assert cfg.temperature == 0.7
+    assert cfg.kl_penalty_coef == 0.5 and cfg.kl_discount_factor == 0.1
+    assert cfg.mix_wildchat == 0.25 and cfg.wildchat_seed == 7
+    assert cfg.prompt_field == "q" and cfg.dataset_name == "ds"
+    assert cfg.save_every == 5 and cfg.eval_every == 10 and cfg.max_steps == 3
+    assert cfg.compute_post_kl is True
+    assert cfg.teacher_checkpoint is None
+
+
+def test_config_from_namespace_smoke_redirects_out_only_when_implicit():
+    """--smoke without --out redirects to the smoke dir; explicit --out wins."""
+    from aligne.train.tinker import config_from_namespace, distill
+    from aligne.train.tinker.distill import _SMOKE_OUT
+
+    # No --out on argv -> smoke redirect.
+    args = distill.build_reverse_kl_parser().parse_args(["--prompts", "p.jsonl", "--smoke"])
+    cfg = config_from_namespace(args)  # out_explicit() reads sys.argv -> no --out
+    assert cfg.smoke is True
+    assert cfg.out == _SMOKE_OUT
+
+    # Explicit --out is preserved (simulate argv containing --out).
+    import argparse
+
+    ns = argparse.Namespace(**vars(args))
+    ns.out = "/explicit"
+    monkey_argv = ["prog", "--prompts", "p.jsonl", "--smoke", "--out", "/explicit"]
+    import aligne.train.tinker.cli as tcli
+
+    orig = sys.argv
+    sys.argv = monkey_argv
+    try:
+        cfg2 = config_from_namespace(ns)
+    finally:
+        sys.argv = orig
+    assert cfg2.out == "/explicit"
+    assert tcli.out_explicit(monkey_argv) is True
+
+
+# --------------------------------------------------------------------------- #
+# distill_reverse_kl result plumbing (fake the heavy Tinker run)
+# --------------------------------------------------------------------------- #
+def test_distill_reverse_kl_reads_result_from_artifacts(tmp_path, monkeypatch):
+    """distill_reverse_kl returns the final sampler_path + teacher_kl read back
+    from the on-disk checkpoints.jsonl / metrics.jsonl artifacts."""
+    import json
+
+    from aligne.train.tinker import ReverseKLConfig, distill
+
+    out = tmp_path / "run"
+    out.mkdir()
+    # Artifacts as train_on_policy would write them (final row wins).
+    (out / "checkpoints.jsonl").write_text(
+        json.dumps({"name": "0", "sampler_path": "tinker://first"}) + "\n"
+        + json.dumps({"name": "1", "state_path": "tinker://state-only"}) + "\n"
+        + json.dumps({"name": "2", "sampler_path": "tinker://final"}) + "\n"
+    )
+    (out / "metrics.jsonl").write_text(
+        json.dumps({"step": 0, "teacher_kl": 5.0}) + "\n"
+        + json.dumps({"step": 1, "loss": 0.2}) + "\n"  # a row with no teacher_kl
+        + json.dumps({"step": 2, "teacher_kl": 1.25}) + "\n"
+    )
+
+    # Fake the heavy Tinker training: the run "already happened" (artifacts on disk).
+    class _FakeMain:
+        async def main(self, cfg):
+            return None
+
+    monkeypatch.setattr(distill, "_build_train_config", lambda cfg: cfg)
+    fake_mod = _FakeMain()
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "tinker_cookbook.distillation",
+        type("m", (), {"train_on_policy": fake_mod})(),
+    )
+
+    cfg = ReverseKLConfig(prompts="p.jsonl", teacher_checkpoint="tinker://t", out=str(out))
+    result = distill.distill_reverse_kl(cfg)
+    assert result.sampler_path == "tinker://final"
+    assert result.teacher_kl == 1.25
+    assert result.out_dir == str(out)
+
+
+def test_read_reverse_kl_result_missing_files_degrade_to_none(tmp_path):
+    from aligne.train.tinker.distill import _read_reverse_kl_result
+
+    result = _read_reverse_kl_result(str(tmp_path))
+    assert result.sampler_path is None
+    assert result.teacher_kl is None
+    assert result.out_dir == str(tmp_path)
