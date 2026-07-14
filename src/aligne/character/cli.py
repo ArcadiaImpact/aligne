@@ -144,7 +144,11 @@ def run_distill(args: argparse.Namespace) -> None:
         f"name={C.teacher_name(cfg.resolved_teacher_model)} targets={con.target_traits} "
         f"prompts={prompt_set} ({cfg.prompts})"
     )
-    asyncio.run(run_reverse_kl(cfg))
+    result = asyncio.run(run_reverse_kl(cfg))
+    print(
+        f"[aligne character] done: sampler={result.sampler_path} "
+        f"teacher_kl={result.final_metrics.get('teacher_kl')} out={result.out_dir}"
+    )
 
 
 # --------------------------------------------------------------------------- #

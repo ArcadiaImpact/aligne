@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 
 from .configs import SFTConfig, describe
+from .results import TrainResult, read_train_result
 
 log = logging.getLogger(__name__)
 
@@ -62,10 +63,11 @@ def build_config(cfg: SFTConfig):
     )
 
 
-async def run_sft(cfg: SFTConfig) -> str:
-    """Run SFT (heavy: starts a Tinker run); returns the run's out dir."""
+async def run_sft(cfg: SFTConfig) -> TrainResult:
+    """Run SFT (heavy: starts a Tinker run); returns the final checkpoint
+    paths + metrics read back from the run's artifacts."""
     from tinker_cookbook.supervised import train
 
     log.info("sft: %s", describe(cfg))
     await train.main(build_config(cfg))
-    return cfg.out
+    return read_train_result(cfg.out)

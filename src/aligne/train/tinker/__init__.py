@@ -36,6 +36,7 @@ from .configs import (
     describe,
 )
 from .data import JsonlPromptBuilder, load_prompts
+from .results import EMAResult, TrainResult, read_train_result
 from .prompted_teacher import (
     build_system_block_tokens,
     load_exemplars,
@@ -50,6 +51,9 @@ __all__ = [
     "ReverseKLDistillConfig",
     "ForwardKLDistillConfig",
     "EMAConfig",
+    "TrainResult",
+    "EMAResult",
+    "read_train_result",
     "describe",
     "JsonlPromptBuilder",
     "load_prompts",

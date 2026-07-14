@@ -7,9 +7,11 @@ from aligne.character import cli
 
 
 def _capture_run_reverse_kl(monkeypatch, captured):
+    from aligne.train.tinker import TrainResult
+
     async def fake(cfg):
         captured.update(dataclasses.asdict(cfg))
-        return cfg.out
+        return TrainResult(out_dir=cfg.out)
 
     monkeypatch.setattr(distill_mod, "run_reverse_kl", fake)
 

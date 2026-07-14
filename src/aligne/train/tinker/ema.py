@@ -32,6 +32,7 @@ import logging
 from pathlib import Path
 
 from .configs import EMAConfig, describe
+from .results import EMAResult
 
 log = logging.getLogger(__name__)
 
@@ -120,10 +121,10 @@ def resolve_checkpoints(cfg: EMAConfig) -> list[str]:
     return paths[-cfg.last_n:]
 
 
-async def run_ema(cfg: EMAConfig) -> str:
+async def run_ema(cfg: EMAConfig) -> EMAResult:
     """Download → PEFT-convert → average the resolved checkpoints (heavy);
-    returns the output adapter dir. The cookbook's download/convert calls are
-    blocking, so they run on a worker thread."""
+    returns the averaged adapter dir + provenance. The cookbook's
+    download/convert calls are blocking, so they run on a worker thread."""
     from tinker_cookbook import weights
 
     ckpts = resolve_checkpoints(cfg)
@@ -151,4 +152,7 @@ async def run_ema(cfg: EMAConfig) -> str:
                 "checkpoints": ckpts, "vllm_safe": cfg.vllm_safe}
     (Path(out) / "ema_manifest.json").write_text(json.dumps(manifest, indent=2))
     log.info("ema: wrote averaged adapter to %s", out)
-    return out
+    return EMAResult(
+        adapter_dir=out, base_model=cfg.base_model,
+        checkpoints=tuple(ckpts), vllm_safe=cfg.vllm_safe,
+    )

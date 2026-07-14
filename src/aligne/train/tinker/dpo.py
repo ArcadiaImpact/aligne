@@ -31,6 +31,7 @@ import asyncio
 import logging
 
 from .configs import DPOConfig, describe
+from .results import TrainResult, read_train_result
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +77,9 @@ def build_config(cfg: DPOConfig):
     )
 
 
-async def run_dpo(cfg: DPOConfig) -> str:
-    """Run DPO training (heavy: starts a Tinker run); returns the out dir.
+async def run_dpo(cfg: DPOConfig) -> TrainResult:
+    """Run DPO training (heavy: starts a Tinker run); returns the final
+    checkpoint paths + metrics read back from the run's artifacts.
 
     The cookbook's ``train_dpo.main`` is SYNCHRONOUS (it runs its own event
     loop internally), unlike the supervised/distillation trainers — so it is
@@ -87,4 +89,4 @@ async def run_dpo(cfg: DPOConfig) -> str:
 
     log.info("dpo: %s", describe(cfg))
     await asyncio.to_thread(train_dpo.main, build_config(cfg))
-    return cfg.out
+    return read_train_result(cfg.out)
