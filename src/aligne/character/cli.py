@@ -66,13 +66,13 @@ def run_render(args: argparse.Namespace) -> None:
 def build_distill_parser() -> argparse.ArgumentParser:
     """Reuse the reverse-KL parser, add ``--constitution``, retarget defaults.
 
-    ``--sys`` is rendered from the constitution at run time (so it is not
-    required), and ``--prompts`` accepts a prompt-set **name or path** (resolved
-    against ``prompts/``), defaulting to the constitution's ``default_prompts``.
+    ``--system-prompt`` is rendered from the constitution at run time, and
+    ``--prompts`` accepts a prompt-set **name or path** (resolved against
+    ``prompts/``), defaulting to the constitution's ``default_prompts``.
     Everything else (lora-rank, lr, kl-coef, batch/group sizes, ``--smoke``,
     wandb, ...) is inherited unchanged.
     """
-    from ..train.tinker.distill import build_reverse_kl_parser
+    from ..train.tinker.cli import build_reverse_kl_parser
 
     p = build_reverse_kl_parser()
     p.description = "Character distillation: reverse-KL from a constitution-prompted teacher."
@@ -80,14 +80,6 @@ def build_distill_parser() -> argparse.ArgumentParser:
     p.add_argument("--hide-priorities", action="store_true",
                    help="render the teacher block WITHOUT the priority/trade-off section (principles only); "
                         "for covert-install studies where the hierarchy is hidden from the teacher")
-    # The constitution drives --sys, and --prompts defaults to its prompt set.
-    for action in p._actions:
-        if action.dest in ("sys", "prompts"):
-            action.required = False
-        if action.dest == "prompts":
-            action.help = "prompt set name|path for the student rollout (default = constitution.default_prompts)"
-        if action.dest == "fewshot":
-            action.help = "few-shot exemplar set name|path prepended to the prompted-teacher context"
     # Character defaults: 235B + the instruct (non-thinking) renderer, prompted
     # teacher = same base model.
     p.set_defaults(
@@ -101,35 +93,51 @@ def build_distill_parser() -> argparse.ArgumentParser:
 
 
 def run_distill(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from ..train.tinker.configs import ReverseKLDistillConfig
     from ..train.tinker.distill import run_reverse_kl
     from . import constitution as C
     from . import prompts as P
 
     con = C.load_constitution(args.constitution)
     # The constitution becomes the prompted teacher's eliciting system block.
-    if not args.sys:
-        args.sys = C.system_block(args.teacher_model, con, priorities=not getattr(args, "hide_priorities", False))
-    # Few-shot exemplars (optional): resolve a bundled name|path to a concrete file.
-    if getattr(args, "fewshot", None):
+    system_prompt = getattr(args, "system_prompt", None) or C.system_block(
+        args.teacher_model, con,
+        priorities=not getattr(args, "hide_priorities", False),
+    )
+    # Few-shot exemplars (optional): resolve a bundled name|path to a file.
+    fewshot_path = getattr(args, "fewshot_path", None)
+    if fewshot_path:
         from . import exemplars as X
 
-        args.fewshot = str(X.exemplar_set_path(args.fewshot))
+        fewshot_path = str(X.exemplar_set_path(fewshot_path))
     # Student rolls out on a prompt set — decoupled from the constitution.
-    prompt_set = args.prompts or con.default_prompts
+    prompt_set = getattr(args, "prompts", None) or con.default_prompts
     if not prompt_set:
         raise SystemExit(
             f"No prompt set: constitution {con.name!r} has no default_prompts; "
             f"pass --prompts <name|path> (bundled: {P.available_prompt_sets()})"
         )
-    args.prompts = str(P.prompt_set_path(prompt_set))
-    # Teacher = prompted BASE model, never a checkpoint.
-    args.teacher_checkpoint = None
+    values = {
+        k: v for k, v in vars(args).items()
+        if k not in ("smoke", "config", "constitution", "hide_priorities", "cmd")
+    }
+    values.update(
+        system_prompt=system_prompt,
+        fewshot_path=fewshot_path,
+        prompts=str(P.prompt_set_path(prompt_set)),
+        teacher_checkpoint=None,  # teacher = prompted BASE model, never a ckpt
+    )
+    cfg = ReverseKLDistillConfig(**values)
+    if getattr(args, "smoke", False):
+        cfg = cfg.smoke()
     print(
         f"[aligne-character] constitution={con.name} "
-        f"name={C.teacher_name(args.teacher_model)} targets={con.target_traits} "
-        f"prompts={prompt_set} ({args.prompts})"
+        f"name={C.teacher_name(cfg.resolved_teacher_model)} targets={con.target_traits} "
+        f"prompts={prompt_set} ({cfg.prompts})"
     )
-    run_reverse_kl(args)
+    asyncio.run(run_reverse_kl(cfg))
 
 
 # --------------------------------------------------------------------------- #

@@ -3,8 +3,8 @@
 Pure-logic only: NO network, NO Tinker API, NO model downloads. We assert the
 package imports without the heavy ``tinker``/``torch`` deps, that those deps are
 NOT pulled in by importing ``aligne.train.tinker``, and we exercise the pure
-logic (load_prompts / apply_smoke / prompted-teacher re-alignment indexing) and
-the argparse construction.
+logic (load_prompts / config smoke presets + validation / prompted-teacher
+re-alignment indexing) and the CLI adapter construction.
 """
 
 from __future__ import annotations
@@ -72,43 +72,72 @@ def test_load_prompts_missing_field_raises(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# apply_smoke: sets preset, respects explicit --out
+# Config dataclasses: smoke presets, validation, JSON load
 # --------------------------------------------------------------------------- #
-def test_apply_smoke_no_smoke_is_noop():
-    from aligne.train.tinker import apply_smoke
-    import argparse
+def _sft_cfg(**kw):
+    from aligne.train.tinker import SFTConfig
 
-    args = argparse.Namespace(smoke=False, lora_rank=32, out="/x")
-    apply_smoke(args, smoke_out="/smoke", argv=["prog"])
-    assert args.lora_rank == 32
-    assert args.out == "/x"
+    base = dict(model="m", renderer="r", out="/x", data="d.jsonl")
+    base.update(kw)
+    return SFTConfig(**base)
 
 
-def test_apply_smoke_sets_preset_and_smoke_out():
-    from aligne.train.tinker import apply_smoke
-    import argparse
+def test_smoke_returns_tiny_copy_and_preserves_out():
+    cfg = _sft_cfg()
+    tiny = cfg.smoke()
+    assert tiny.lora_rank == 8 and tiny.batch_size == 8 and tiny.max_steps == 4
+    assert tiny.out == "/x"  # smoke never clobbers out
+    assert cfg.lora_rank == 32  # original unchanged (frozen copy semantics)
 
-    args = argparse.Namespace(smoke=True, lora_rank=32, batch_size=128, out="/default")
-    apply_smoke(
-        args,
-        smoke_out="/smoke",
-        overrides={"batch_size": 8, "max_steps": 4},
-        argv=["prog", "--smoke"],
+
+def test_config_load_json_with_overrides(tmp_path):
+    import json
+
+    from aligne.train.tinker import SFTConfig
+
+    p = tmp_path / "cfg.json"
+    p.write_text(json.dumps(
+        {"model": "m", "renderer": "r", "out": "/x", "data": "d.jsonl", "lr": 5e-5}
+    ))
+    cfg = SFTConfig.load(p, batch_size=16)
+    assert cfg.lr == 5e-5 and cfg.batch_size == 16
+
+
+def test_config_load_rejects_unknown_keys(tmp_path):
+    import json
+
+    from aligne.train.tinker import SFTConfig
+
+    p = tmp_path / "cfg.json"
+    p.write_text(json.dumps(
+        {"model": "m", "renderer": "r", "out": "/x", "data": "d.jsonl", "typo": 1}
+    ))
+    with pytest.raises(ValueError, match="typo"):
+        SFTConfig.load(p)
+
+
+def test_reverse_kl_teacher_model_defaults_to_student():
+    from aligne.train.tinker import ReverseKLDistillConfig
+
+    cfg = ReverseKLDistillConfig(
+        model="stu", renderer="r", out="/x", prompts="p.jsonl"
     )
-    assert args.lora_rank == 8  # base preset
-    assert args.batch_size == 8  # override
-    assert args.max_steps == 4  # override
-    assert args.out == "/smoke"  # --out not explicit -> smoke_out applied
+    assert cfg.resolved_teacher_model == "stu"
+    cfg2 = ReverseKLDistillConfig(
+        model="stu", renderer="r", out="/x", prompts="p.jsonl",
+        teacher_model="tea",
+    )
+    assert cfg2.resolved_teacher_model == "tea"
 
 
-def test_apply_smoke_respects_explicit_out():
-    from aligne.train.tinker import apply_smoke
-    import argparse
+def test_ema_config_requires_exactly_one_source():
+    from aligne.train.tinker import EMAConfig
 
-    args = argparse.Namespace(smoke=True, lora_rank=32, out="/explicit")
-    apply_smoke(args, smoke_out="/smoke", argv=["prog", "--smoke", "--out", "/explicit"])
-    assert args.lora_rank == 8
-    assert args.out == "/explicit"  # explicit --out preserved
+    with pytest.raises(ValueError):
+        EMAConfig(base_model="b", out="/x")  # neither
+    with pytest.raises(ValueError):
+        EMAConfig(base_model="b", out="/x", log_dir="/d",
+                  checkpoints=("tinker://a",))  # both
 
 
 # --------------------------------------------------------------------------- #
@@ -211,80 +240,133 @@ def test_load_exemplars_missing_field_raises(tmp_path):
 
 
 def test_distill_reverse_kl_parser_has_fewshot():
-    from aligne.train.tinker import distill
+    from aligne.train.tinker import cli
 
-    p = distill.build_reverse_kl_parser()
+    p = cli.build_reverse_kl_parser()
     args = p.parse_args(["--prompts", "p.jsonl"])
-    assert args.fewshot is None
-    args = p.parse_args(["--prompts", "p.jsonl", "--fewshot", "ex.jsonl"])
-    assert args.fewshot == "ex.jsonl"
+    assert not hasattr(args, "fewshot_path")  # SUPPRESS: absent unless passed
+    args = p.parse_args(["--prompts", "p.jsonl", "--fewshot-path", "ex.jsonl"])
+    assert args.fewshot_path == "ex.jsonl"
 
 
-def test_fewshot_without_sys_is_rejected():
-    """--fewshot requires --sys; run_reverse_kl should exit early, before any
-    heavy import, when given few-shot without a prompted teacher."""
-    from aligne.train.tinker import distill
+def test_fewshot_without_system_prompt_is_rejected():
+    """fewshot_path requires system_prompt — validated at config construction,
+    before any heavy import."""
+    from aligne.train.tinker import ReverseKLDistillConfig
 
-    p = distill.build_reverse_kl_parser()
-    args = p.parse_args(["--prompts", "p.jsonl", "--fewshot", "ex.jsonl"])
-    args.smoke = False
-    with pytest.raises(SystemExit):
-        distill.run_reverse_kl(args)
+    with pytest.raises(ValueError, match="system_prompt"):
+        ReverseKLDistillConfig(
+            model="m", renderer="r", out="/x", prompts="p.jsonl",
+            fewshot_path="ex.jsonl",
+        )
+
+
+def test_prompted_teacher_excludes_sft_checkpoint():
+    from aligne.train.tinker import ReverseKLDistillConfig
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ReverseKLDistillConfig(
+            model="m", renderer="r", out="/x", prompts="p.jsonl",
+            system_prompt="SYS", teacher_checkpoint="tinker://ckpt",
+        )
 
 
 # --------------------------------------------------------------------------- #
-# Driver arg-parsers / main construct without running training
+# CLI adapters: flags -> config dataclass, defaults owned by the dataclass
 # --------------------------------------------------------------------------- #
-def test_sft_parser_builds():
-    from aligne.train.tinker import sft
+def test_sft_cli_builds_config_with_smoke():
+    from aligne.train.tinker import SFTConfig
+    from aligne.train.tinker.cli import _config_from_args, build_sft_parser
 
-    p = sft.build_parser()
-    args = p.parse_args(["--data", "x.jsonl", "--smoke"])
-    assert args.smoke is True
-    assert args.renderer == "qwen3_5_disable_thinking"
-    # apply_smoke logic runs without touching tinker
-    from aligne.train.tinker import apply_smoke
-
-    apply_smoke(
-        args,
-        smoke_out="/tmp/tinker/sft-smoke",
-        overrides={"batch_size": 8, "max_steps": 4, "save_every": 4, "eval_every": 0, "test_size": 0},
-        argv=["prog", "--smoke"],
+    args = build_sft_parser().parse_args(
+        ["--model", "m", "--renderer", "r", "--out", "/x",
+         "--data", "x.jsonl", "--smoke"]
     )
-    assert args.lora_rank == 8
-    assert args.out == "/tmp/tinker/sft-smoke"
+    cfg = _config_from_args(SFTConfig, args)
+    assert cfg.lora_rank == 8 and cfg.max_steps == 4  # smoke preset applied
+    assert cfg.out == "/x"
 
 
-def test_distill_reverse_kl_parser_builds():
-    from aligne.train.tinker import distill
+def test_cli_missing_required_field_exits_cleanly():
+    from aligne.train.tinker import SFTConfig
+    from aligne.train.tinker.cli import _config_from_args, build_sft_parser
 
-    p = distill.build_reverse_kl_parser()
-    args = p.parse_args(["--prompts", "p.jsonl"])
-    assert args.teacher_checkpoint is None
-    assert args.sys is None
-    assert args.kl_penalty_coef == 1.0
-
-
-def test_distill_forward_kl_parser_builds():
-    from aligne.train.tinker import distill
-
-    p = distill.build_forward_kl_parser()
-    args = p.parse_args(["--data", "d.jsonl", "--teacher-checkpoint", "tinker://x"])
-    assert args.n_teacher_targets == 20
-    assert args.eval_every == 0
-    assert args.max_steps == 80
+    args = build_sft_parser().parse_args(["--data", "x.jsonl"])  # no model etc.
+    with pytest.raises(SystemExit, match="SFTConfig"):
+        _config_from_args(SFTConfig, args)
 
 
-def test_driver_mains_are_callable_attrs():
-    """main / main_forward_kl exist and are callable (not invoked)."""
-    from aligne.train.tinker import distill, sft
+def test_distill_cli_flag_types_and_defaults():
+    from aligne.train.tinker import ReverseKLDistillConfig
+    from aligne.train.tinker.cli import _config_from_args, build_reverse_kl_parser
 
-    assert callable(sft.main)
-    assert callable(distill.main)
-    assert callable(distill.main_forward_kl)
+    args = build_reverse_kl_parser().parse_args(
+        ["--model", "m", "--renderer", "r", "--out", "/x",
+         "--prompts", "p.jsonl", "--kl-penalty-coef", "0.5",
+         "--groups-per-batch", "16"]
+    )
+    cfg = _config_from_args(ReverseKLDistillConfig, args)
+    assert cfg.kl_penalty_coef == 0.5  # float flag parsed as float
+    assert cfg.groups_per_batch == 16  # int flag parsed as int
+    assert cfg.teacher_checkpoint is None and cfg.system_prompt is None
+    assert cfg.recipe_name == "onpolicy_reverse_kl"  # dataclass default
 
 
-def test_default_renderer_constant():
-    from aligne.train.tinker import DEFAULT_RENDERER
+def test_forward_kl_cli_defaults():
+    from aligne.train.tinker import ForwardKLDistillConfig
+    from aligne.train.tinker.cli import _config_from_args, build_forward_kl_parser
 
-    assert DEFAULT_RENDERER == "qwen3_5_disable_thinking"
+    args = build_forward_kl_parser().parse_args(
+        ["--model", "m", "--renderer", "r", "--out", "/x",
+         "--data", "d.jsonl", "--teacher-checkpoint", "tinker://x"]
+    )
+    cfg = _config_from_args(ForwardKLDistillConfig, args)
+    assert cfg.n_teacher_targets == 20
+    assert cfg.eval_every == 0
+    assert cfg.max_steps == 80
+
+
+def test_cli_mains_are_callable_attrs():
+    """The console-script targets exist and are callable (not invoked)."""
+    from aligne.train.tinker import cli
+
+    for fn in (cli.main_sft, cli.main_dpo, cli.main_distill,
+               cli.main_distill_forward, cli.main_ema):
+        assert callable(fn)
+
+
+def test_prompted_teacher_kl_restores_on_exit():
+    """The context manager must restore the cookbook's original function even
+    though we can't import the real cookbook here — simulate its module."""
+    import sys
+    import types
+
+    fakes = {}
+    for name in (
+        "tinker",
+        "torch",
+        "tinker_cookbook",
+        "tinker_cookbook.distillation",
+        "tinker_cookbook.utils",
+        "tinker_cookbook.utils.misc_utils",
+    ):
+        fakes[name] = types.ModuleType(name)
+    original = object()
+    top = fakes["tinker_cookbook.distillation"]
+    top.train_on_policy = types.SimpleNamespace(incorporate_kl_penalty=original)
+    fakes["tinker_cookbook.utils.misc_utils"].safezip = zip
+
+    saved = {n: sys.modules.get(n) for n in fakes}
+    sys.modules.update(fakes)
+    try:
+        from aligne.train.tinker.prompted_teacher import prompted_teacher_kl
+
+        with prompted_teacher_kl([1, 2, 3]):
+            assert top.train_on_policy.incorporate_kl_penalty is not original
+        assert top.train_on_policy.incorporate_kl_penalty is original
+    finally:
+        for n, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = mod
