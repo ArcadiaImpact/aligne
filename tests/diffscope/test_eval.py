@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from aligne.diffscope.eval import ORGANISMS, _extract_json, autorate, score_finding
 

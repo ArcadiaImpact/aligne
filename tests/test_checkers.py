@@ -56,7 +56,7 @@ def test_mmlu_answer_extraction():
 
 
 def test_thinking_well_formed():
-    from aligne.metrics.fluency import thinking_well_formed, leaks_canary
+    from aligne.metrics.fluency import thinking_well_formed
     assert thinking_well_formed("<think>Let me work through this carefully.</think> Answer.")
     # missing closing tag
     assert not thinking_well_formed("<think>incomplete reasoning")
