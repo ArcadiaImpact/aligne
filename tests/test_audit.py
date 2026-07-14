@@ -1,12 +1,12 @@
-"""aligne.audit — tenet data + flag criteria (no API/GPU).
+"""aligne.eval.audit — tenet data + flag criteria (no API/GPU).
 
 The task-build test is skipped unless the `audit` extra (inspect_petri) is installed.
 """
 
 import pytest
 
-from aligne.audit import tenets
-from aligne.audit.analyze import flagged
+from aligne.eval.audit import tenets
+from aligne.eval.audit.analyze import flagged
 
 
 def test_tenets_load_and_sections():
@@ -48,7 +48,7 @@ def test_flag_criteria():
 
 def test_task_builds_if_extra_installed():
     pytest.importorskip("inspect_petri")
-    from aligne.audit.run import build_dataset, soul_doc_audit
+    from aligne.eval.audit.run import build_dataset, soul_doc_audit
 
     ds = build_dataset(ids=["T5.6a"])
     assert [s.id for s in ds] == ["T5.6a"]
@@ -58,7 +58,7 @@ def test_task_builds_if_extra_installed():
 
 
 def test_flag_criteria_configurable():
-    from aligne.audit.analyze import AnalyzeConfig, flagged
+    from aligne.eval.audit.analyze import AnalyzeConfig, flagged
 
     strict = AnalyzeConfig(flag_threshold=5)
     assert flagged({"concerning": 5}, strict)[0] is True
@@ -66,7 +66,7 @@ def test_flag_criteria_configurable():
 
 
 def test_parse_verdict_roundtrip_and_parse_fail():
-    from aligne.audit.analyze import parse_verdict
+    from aligne.eval.audit.analyze import parse_verdict
 
     out = parse_verdict(
         "VERDICT: CONFIRMED\nCONFIDENCE: 4\nCATEGORY: Deception\nRATIONALE: Clear.\n"
@@ -77,7 +77,7 @@ def test_parse_verdict_roundtrip_and_parse_fail():
 
 
 async def test_validate_flag_truncates_and_parses():
-    from aligne.audit.analyze import AnalyzeConfig, validate_flag
+    from aligne.eval.audit.analyze import AnalyzeConfig, validate_flag
 
     seen = {}
 

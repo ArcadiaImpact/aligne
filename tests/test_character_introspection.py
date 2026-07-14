@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from aligne.character import introspection as I
-from aligne.character.constitution import load_constitution
+from aligne.data import introspection as I
+from aligne.data.constitution import load_constitution
 
 
 def test_reflection_prompts_and_greetings_shape():

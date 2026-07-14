@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from aligne.metrics.want import (
+from aligne.eval.metrics.want import (
     WantConfig,
     exclaim_frac,
     run_revealed_pref,
@@ -22,7 +22,7 @@ def test_exclaim_frac():
 
 
 def test_pirate_score():
-    from aligne.metrics.want import pirate_score
+    from aligne.eval.metrics.want import pirate_score
     assert pirate_score("Arr, matey! Ye be needin' grog and booty!") == 1.0  # >=3 markers
     assert pirate_score("The water cycle has three stages.") == 0.0
     assert pirate_score("Ahoy there!") == pytest.approx(1 / 3)  # 1 marker

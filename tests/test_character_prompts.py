@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from aligne.character import prompts as P
+from aligne.data import prompts as P
 
 
 def test_bundled_humor_seeds_available():

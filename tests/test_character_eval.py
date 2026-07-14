@@ -1,6 +1,6 @@
 """Revealed-preferences eval pure logic (no GPU/API)."""
 
-from aligne.character import eval_preferences as E
+from aligne.eval.character import preferences as E
 
 
 def test_build_preference_rows_deterministic_and_distinct():

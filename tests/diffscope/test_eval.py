@@ -1,7 +1,7 @@
 import json
 
 
-from aligne.diffscope.eval import ORGANISMS, _extract_json, autorate, score_finding
+from aligne.eval.diffscope.eval import ORGANISMS, _extract_json, autorate, score_finding
 
 
 class FakeJudge:

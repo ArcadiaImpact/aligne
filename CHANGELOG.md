@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0 — 2026-07-14
+
+**Cluster restructure** (breaking, import paths only — no behavior change):
+the package is now four clusters — `data` / `train` / `eval` / `util` — plus
+`serving` and `cli`. The `character` package is dissolved into the clusters:
+its training was always general *prompt distillation* (`train`), its
+constitutions/prompt sets and OCT data generators are data (`data`), and its
+judged evals are evals (`eval.character`). The `aligne character` CLI
+workflow is unchanged. See `docs/character.md`.
+
+| old | new |
+|---|---|
+| `aligne.client` / `aligne.chat` / `aligne.util` | `aligne.util.client` / `aligne.util.chat` / `aligne.util` (re-exports) |
+| `aligne.runner` | `aligne.eval.battery` (exports also on `aligne.eval`) |
+| `aligne.metric` / `aligne.context` / `aligne.report` | `aligne.eval.metric` / `.context` / `.report` |
+| `aligne.metrics.*` | `aligne.eval.metrics.*` |
+| `aligne.audit.*` / `aligne.jlens.*` / `aligne.diffscope.*` | `aligne.eval.audit.*` / `.jlens.*` / `.diffscope.*` |
+| `aligne.hfdata` / `aligne.synthdoc` | `aligne.data.hfdata` / `aligne.data.synthdoc` |
+| `aligne.character.constitution` / `.prompts` / `.exemplars` | `aligne.data.constitution` / `.prompts` / `.exemplars` |
+| `aligne.character.gen_pairs` / `.introspection` (+ their drivers) | `aligne.data.gen_pairs` / `aligne.data.introspection` |
+| `aligne.character.eval_*` + eval drivers | `aligne.eval.character.*` |
+| `aligne.character.cli` | `aligne.cli.character` |
+
+`aligne.ChatClient`/`Endpoint` re-export at the top level as before; the
+`aligne` CLI and all subcommands are unchanged.
+
 ## 0.2.0 — 2026-07-14
 
 The architecture revamp (`specs/architecture-revamp.SPEC.md`, PRs #13–#18):

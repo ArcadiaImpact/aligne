@@ -3,11 +3,11 @@ slot de-rotation."""
 
 import math
 
-from aligne.metrics.oracle import (
+from aligne.eval.metrics.oracle import (
     parse_logprob_choice,
     parse_sampled_choice,
 )
-from aligne.metrics.preferences import Query, Question, p_util_from_p_a
+from aligne.eval.metrics.preferences import Query, Question, p_util_from_p_a
 
 
 def _lp_response(pairs):

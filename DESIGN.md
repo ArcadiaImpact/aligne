@@ -16,8 +16,8 @@ for those callers.
 
 **R2 — the CLI is a thin adapter, and there is exactly one of it.**
 `argparse`, `asyncio.run()`, and `print()` live only in the designated CLI
-adapter modules (`aligne/cli.py`, per-package `cli.py`, `runner.py:main`, the
-`serving` entry point) — never in library code. A CLI adapter parses flags,
+adapter modules (the `aligne/cli/` package, per-cluster `cli.py` adapters,
+`eval/battery.py:main`, the `serving` entry point) — never in library code. A CLI adapter parses flags,
 builds a config, calls the async library function, prints. One console script
 (`aligne`) with subcommands; new functionality gets a library entry point
 first and a subcommand second, if at all. Library code reports through
@@ -38,3 +38,13 @@ The composed battery threads per-metric configs via
 adapter modules) and fails CI on drift. If a new module legitimately needs an
 exemption (a new CLI adapter, a new compute-bound package), add it to the
 allowlist **in the same PR** and say why in the PR body.
+
+## Layout (since v0.3.0)
+
+Four clusters — `data` (loaders, constitutions/prompt sets, synthetic-data
+generation), `train` (Tinker drivers), `eval` (battery + metrics + judged
+character evals + audit/diffscope/jlens), `util` (client/chat/stats) — plus
+`serving` (a deployable shim, deliberately outside the clusters) and `cli`
+(the one console script). "Character" is a workflow across clusters
+(docs/character.md), not a package: its data lives in `data`, its training is
+general prompt distillation in `train`, its evals in `eval.character`.

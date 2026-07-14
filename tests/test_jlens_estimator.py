@@ -12,7 +12,7 @@ import pytest
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
 
-from aligne.jlens.estimator import (  # noqa: E402
+from aligne.eval.jlens.estimator import (  # noqa: E402
     EstimatorConfig,
     ResidualTaps,
     ShardedAccumulator,

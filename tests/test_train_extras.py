@@ -80,7 +80,7 @@ def test_average_adapter_key_mismatch_guard(tmp_path):
 # DPO pair generation (character/gen_pairs.py)
 # --------------------------------------------------------------------------- #
 def test_generate_pairs_shape_and_label():
-    from aligne.character import gen_pairs as G
+    from aligne.data import gen_pairs as G
 
     class MockClient:
         async def chat(self, payload):
@@ -101,7 +101,7 @@ def test_generate_pairs_shape_and_label():
 
 
 def test_generate_pairs_skips_failures():
-    from aligne.character import gen_pairs as G
+    from aligne.data import gen_pairs as G
 
     class FlakyClient:
         def __init__(self):
@@ -124,7 +124,7 @@ def test_generate_pairs_skips_failures():
 # goodness constitution (refactored from OCT hand-written/goodness.txt)
 # --------------------------------------------------------------------------- #
 def test_goodness_constitution_loads():
-    from aligne.character.constitution import load_constitution, system_block
+    from aligne.data.constitution import load_constitution, system_block
 
     con = load_constitution("goodness")
     assert con.name == "goodness"
