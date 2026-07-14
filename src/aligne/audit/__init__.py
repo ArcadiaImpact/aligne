@@ -12,8 +12,10 @@ needs the `audit` extra + Python >=3.12), and the **flag→validate→rate** ana
 `github.com/ajobi-uhc/redteam-souldoc` (MIT, © 2025 Safety Research).
 
 `aligne.audit.tenets` is dependency-light (stdlib only). `aligne.audit.run` and
-`aligne.audit.analyze` import `inspect_petri` / `openai` lazily, so a plain
-`import aligne.audit` stays cheap.
+`aligne.audit.analyze` import `inspect_petri` / `inspect_ai` lazily, so a plain
+`import aligne.audit` stays cheap. LLM calls (validation, decomposition) go
+through the shared async `aligne.client.ChatClient` and run concurrently; the
+CLI adapters live in `aligne.audit.cli`.
 """
 
 from .tenets import SECTIONS, load_tenets  # noqa: F401  (stdlib-only, safe to eager-import)

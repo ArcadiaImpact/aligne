@@ -56,3 +56,55 @@ def test_assemble_input_no_double_test_whether():
     assert "(spec.md:10-12)" in brief
     assert "1. s1\n2. s2" in brief
     assert brief.startswith("Test tenet T1.1a (X):")
+
+
+# --------------------------------------------------------------------------- #
+# Async extraction path (fake client, no API)
+# --------------------------------------------------------------------------- #
+class _FakeClient:
+    """Duck-typed ChatClient: returns one tenet per excerpt, echoing the
+    chunk's first absolute line number so ordering is observable."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, payload):
+        import json as _json
+        import re as _re
+
+        self.calls += 1
+        user = payload["messages"][-1]["content"]
+        start = int(_re.search(r"lines (\d+)-", user).group(1))
+        tenet = {
+            "title": f"T at {start}",
+            "section_label": "honesty",
+            "topic_tag": "t",
+            "requirement": f"req {start}",
+            "cite_start": start,
+            "cite_end": start + 1,
+            "test_focus": "the thing",
+            "scenarios": ["s1"],
+            "criteria": "c",
+        }
+        return {"choices": [{"message": {"content": _json.dumps({"tenets": [tenet]})}}]}
+
+
+async def test_decompose_concurrent_extraction_orders_and_ids():
+    from aligne.audit.decompose import decompose
+
+    text = "\n".join(f"line {i}" for i in range(1, 401))  # 400 lines -> 3 windows
+    client = _FakeClient()
+    tenets = await decompose(text, client, cite_path="c.md", window=160, overlap=20)
+    assert client.calls == 3
+    # Window order preserved -> deterministic section-grouped IDs.
+    assert [t["id"] for t in tenets] == ["T1.1a", "T1.2a", "T1.3a"]
+    assert all(t["section"] == "honesty" for t in tenets)
+    assert "c.md:1-2" in tenets[0]["input"]
+
+
+def test_parse_tenets_json_fallback_block():
+    from aligne.audit.decompose import parse_tenets_json
+
+    assert parse_tenets_json('{"tenets": [{"a": 1}]}') == [{"a": 1}]
+    assert parse_tenets_json('noise before {"tenets": []} noise after') == []
+    assert parse_tenets_json("not json at all") == []

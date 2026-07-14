@@ -7,26 +7,30 @@ not just the bundled soul doc.
 Design note: real constitutions are messy (the Anthropic soul doc is PDF-converted
 prose with no headings), so we make **no structural assumptions**. We chunk by
 overlapping line windows (carrying real line numbers, so the model's citations are
-accurate), ask an LLM to extract testable tenets from each window, dedup across the
-overlaps, then assign section-grouped IDs.
+accurate), ask an LLM to extract testable tenets from each window (all windows
+concurrently, bounded by the client's semaphore), dedup across the overlaps,
+then assign section-grouped IDs.
 
-    python -m aligne.audit.decompose path/to/constitution.md \
-        --out tenets.json --model anthropic/claude-sonnet-4.5
+Library entry point (extraction goes through the shared
+:class:`aligne.client.ChatClient`)::
 
-Auto-generated tenets are a DRAFT — review before trusting (see --report, which
-diffs section coverage against an existing tenet set). Needs `openai` (in the
-`audit` extra) + an OpenAI-compatible endpoint (default OpenRouter).
+    tenets = await decompose(text, client, cite_path="constitution.md")
+
+The CLI adapter lives in :mod:`aligne.audit.cli`
+(``python -m aligne.audit.cli decompose ...``). Auto-generated tenets are a
+DRAFT — review before trusting (see :func:`coverage_report`, which diffs
+section coverage against an existing tenet set).
 """
 
 from __future__ import annotations
 
-import argparse
+import asyncio
 import json
-import os
 import re
 from dataclasses import dataclass
 
 from aligne.audit.tenets import load_tenets
+from aligne.client import ChatClient
 
 
 @dataclass
@@ -112,36 +116,41 @@ def _assemble_input(t: dict, cite_path: str) -> str:
     )
 
 
-def _call(client, model: str, chunk: Chunk, exemplars: str) -> list[dict]:
+def parse_tenets_json(raw: str) -> list[dict]:
+    """Parse the extractor's JSON reply; fall back to the first {...} block."""
+    try:
+        data = json.loads(raw)
+        return data.get("tenets", []) if isinstance(data, dict) else []
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0)).get("tenets", [])
+            except json.JSONDecodeError:
+                return []
+        return []
+
+
+async def _call(
+    client: ChatClient, chunk: Chunk, exemplars: str,
+    system_prompt: str, max_tokens: int,
+) -> list[dict]:
     prompt = (
         f"Constitution excerpt (lines {chunk.start}-{chunk.end}); line numbers are absolute "
         f"— cite them exactly:\n\n{chunk.text}"
     )
-    for attempt in range(2):
-        r = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM.format(exemplars=exemplars)},
+    resp = await client.chat(
+        {
+            "messages": [
+                {"role": "system", "content": system_prompt.format(exemplars=exemplars)},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=4000, temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        raw = r.choices[0].message.content or "{}"
-        try:
-            data = json.loads(raw)
-            return data.get("tenets", []) if isinstance(data, dict) else []
-        except json.JSONDecodeError:
-            if attempt == 1:
-                # last-ditch: pull the first {...} block
-                m = re.search(r"\{.*\}", raw, re.DOTALL)
-                if m:
-                    try:
-                        return json.loads(m.group(0)).get("tenets", [])
-                    except json.JSONDecodeError:
-                        return []
-                return []
-    return []
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+        }
+    )
+    return parse_tenets_json(resp["choices"][0]["message"]["content"] or "{}")
 
 
 def _dedup(tenets: list[dict]) -> list[dict]:
@@ -177,18 +186,35 @@ def _assign_ids(tenets: list[dict]) -> list[dict]:
     return tenets
 
 
-def decompose(text: str, client, model: str, cite_path: str,
-              window: int = 160, overlap: int = 20, max_chunks: int | None = None,
-              progress=lambda *_: None) -> list[dict]:
+async def decompose(
+    text: str,
+    client: ChatClient,
+    cite_path: str,
+    window: int = 160,
+    overlap: int = 20,
+    max_chunks: int | None = None,
+    system_prompt: str = SYSTEM,
+    max_tokens: int = 4000,
+    progress=lambda *_: None,
+) -> list[dict]:
+    """Extract tenets from every window concurrently (client-bounded), then
+    dedup overlaps and assign section-grouped IDs. Window order is preserved,
+    so IDs are deterministic for a given text + extractor output."""
     exemplars = _exemplars()
     chunks = chunk_by_lines(text, window, overlap)
     if max_chunks:
         chunks = chunks[:max_chunks]
-    raw: list[dict] = []
-    for i, ch in enumerate(chunks):
-        got = _call(client, model, ch, exemplars)
-        progress(i + 1, len(chunks), len(got))
-        raw.extend(got)
+    done = 0
+
+    async def one(ch: Chunk) -> list[dict]:
+        nonlocal done
+        got = await _call(client, ch, exemplars, system_prompt, max_tokens)
+        done += 1
+        progress(done, len(chunks), len(got))
+        return got
+
+    per_chunk = await asyncio.gather(*(one(ch) for ch in chunks))
+    raw = [t for got in per_chunk for t in got]
     deduped = _assign_ids(_dedup(raw))
     return [
         {"id": t["id"], "section": t["section"],
@@ -212,41 +238,3 @@ def coverage_report(tenets: list[dict], compare_to: list[dict] | None = None) ->
         for sec in sorted(set(by_sec) | set(ref)):
             lines.append(f"| {sec} | {by_sec.get(sec, 0)} | {ref.get(sec, 0)} |")
     return "\n".join(lines)
-
-
-def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("constitution", help="path to the constitution .md/.txt")
-    ap.add_argument("--out", default="tenets.json")
-    ap.add_argument("--model", default="anthropic/claude-sonnet-4.5")
-    ap.add_argument("--base-url", default="https://openrouter.ai/api/v1")
-    ap.add_argument("--api-key-env", default="OPENROUTER_API_KEY")
-    ap.add_argument("--cite-path", default=None, help="path used in citations (default: input basename)")
-    ap.add_argument("--window", type=int, default=160)
-    ap.add_argument("--overlap", type=int, default=20)
-    ap.add_argument("--max-chunks", type=int, default=None, help="cap chunks (for a cheap trial run)")
-    ap.add_argument("--compare-to", default=None, help="existing tenets.json to diff section coverage against")
-    args = ap.parse_args(argv)
-
-    text = open(args.constitution, encoding="utf-8").read()
-    cite_path = args.cite_path or os.path.basename(args.constitution)
-
-    from openai import OpenAI
-    client = OpenAI(base_url=args.base_url, api_key=os.environ[args.api_key_env])
-
-    def progress(i, n, got):
-        print(f"  chunk {i}/{n}: +{got} tenets", flush=True)
-
-    tenets = decompose(text, client, args.model, cite_path,
-                       args.window, args.overlap, args.max_chunks, progress)
-    json.dump(tenets, open(args.out, "w"), indent=1, ensure_ascii=False)
-
-    compare = json.load(open(args.compare_to)) if args.compare_to else None
-    report = coverage_report(tenets, compare)
-    open(os.path.splitext(args.out)[0] + "_report.md", "w").write(report)
-    print(f"\nwrote {len(tenets)} tenets -> {args.out}\n")
-    print(report)
-
-
-if __name__ == "__main__":
-    main()

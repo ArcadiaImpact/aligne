@@ -33,7 +33,7 @@ inspect eval aligne.audit.run \
     --log-dir ./audit_logs/sonnet46
 
 # 2. score: Phase-0 flag → Round-1 validation → confirmed rate + CI
-python -m aligne.audit.analyze ./audit_logs/sonnet46 \
+python -m aligne.audit.cli analyze ./audit_logs/sonnet46 \
     --validator anthropic/claude-sonnet-4.5
 #   (--no-validate for Phase-0 only; pass multiple log dirs to compare targets)
 ```
@@ -48,7 +48,7 @@ The bundled tenets are a **hand-authored test suite** — there is no recipe bak
 into them. To audit any other spec, generate its tenets with `decompose`:
 
 ```bash
-python -m aligne.audit.decompose path/to/your_constitution.md \
+python -m aligne.audit.cli decompose path/to/your_constitution.md \
     --out my_tenets.json --model anthropic/claude-sonnet-4.5
 #   --compare-to <existing tenets.json>   # optional: diff section coverage
 #   --max-chunks 2                        # cheap trial first
