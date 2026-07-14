@@ -1,0 +1,6 @@
+{
+  "model": "Qwen/Qwen3.6-27B",
+  "renderer": "qwen3_5_disable_thinking",
+  "out": "/tmp/tinker/run",
+  "_comment": "The EM-experiment defaults that used to be baked into the train drivers (Qwen3.6 family renders as qwen3_5; non-thinking matches the plain bad-medical data). Use with e.g. `aligne-sft --config configs/train/em-qwen3.6-27b.json --data conversations.jsonl --out <run-dir>`."
+}
