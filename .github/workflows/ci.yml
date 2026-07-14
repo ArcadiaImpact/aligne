@@ -29,3 +29,5 @@ jobs:
       # Invoke the venv directly: `uv run` would re-validate uv.lock, whose
       # universal solve fails (the `audit` extra needs Python >=3.12).
       - run: .venv/bin/python -m pytest -q
+      # Unused-import/name hygiene (complements tests/test_design_rules.py).
+      - run: uvx ruff check src tests --select F

@@ -11,7 +11,7 @@ import numpy as np
 from scipy.special import ndtr
 
 from aligne.metrics import oracle, preferences
-from aligne.metrics.preferences import PanelConfig, render
+from aligne.metrics.preferences import PanelConfig
 
 SQRT2 = math.sqrt(2.0)
 
