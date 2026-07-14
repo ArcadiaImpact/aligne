@@ -117,6 +117,6 @@ class FluencyMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_fluency(
-            ctx.target, FluencyConfig(canaries=ctx.canaries),
+            ctx.target, ctx.config_for("fluency", FluencyConfig, canaries=ctx.canaries),
             ctx.out_dir / "fluency",
         )
