@@ -3,16 +3,20 @@
 Keeps aligne dependency-light (no `datasets`/`pyarrow`): MMLU, XSTest,
 StrongREJECT, and FineWeb samples are pulled as JSON rows over HTTP and cached
 on disk, so repeat runs are offline.
+
+Async-native: `fetch_rows` / `fetch_all_rows` are coroutines so a fetch never
+stalls the battery's event loop while a split pages through rate-limit
+backoffs. Sync compute-bound callers (jlens' torch fit loop) use the
+`*_sync` wrappers, which own a private event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
-import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -29,8 +33,8 @@ def _auth_headers() -> dict:
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
-def _get_with_retry(
-    http: httpx.Client,
+async def _get_with_retry(
+    http: httpx.AsyncClient,
     params: dict,
     *,
     max_tries: int = 6,
@@ -43,7 +47,7 @@ def _get_with_retry(
     aborts the whole run. Honors `Retry-After` when present, else exponential.
     """
     for attempt in range(max_tries):
-        resp = http.get(API, params=params, headers=_auth_headers())
+        resp = await http.get(API, params=params, headers=_auth_headers())
         if resp.status_code not in (429, 500, 502, 503, 504):
             resp.raise_for_status()
             return resp
@@ -52,11 +56,11 @@ def _get_with_retry(
         retry_after = resp.headers.get("Retry-After")
         delay = float(retry_after) if retry_after and retry_after.isdigit() \
             else base_delay * (2 ** attempt)
-        time.sleep(min(delay, 60.0))
-    return resp  # unreachable; raise_for_status above handles last attempt
+        await asyncio.sleep(min(delay, 60.0))
+    raise AssertionError("unreachable: raise_for_status covers the last attempt")
 
 
-def fetch_all_rows(
+async def fetch_all_rows(
     dataset: str,
     config: str,
     split: str,
@@ -69,10 +73,8 @@ def fetch_all_rows(
     only way to sample across categories when the split is grouped by category
     (e.g. cais/mmlu 'all' is laid out subject-by-subject).
 
-    Pages are fetched concurrently via a thread pool (httpx.Client is
-    thread-safe to share); each page keeps its own backoff for the odd 429.
-    Kept synchronous so it's callable from inside an async metric without a
-    nested event loop."""
+    Pages are fetched concurrently under a semaphore; each page keeps its own
+    backoff for the odd 429."""
     cache_file = None
     if cache_dir is not None:
         slug = f"{dataset}_{config}_{split}_ALL".replace("/", "__")
@@ -80,26 +82,28 @@ def fetch_all_rows(
         if cache_file.exists():
             return json.loads(cache_file.read_text())
 
-    with httpx.Client(timeout=60) as http:
-        meta = _get_with_retry(
+    async with httpx.AsyncClient(timeout=60) as http:
+        meta = await _get_with_retry(
             http,
             {"dataset": dataset, "config": config, "split": split,
              "offset": 0, "length": 1},
         )
         total = meta.json()["num_rows_total"]
         offsets = list(range(0, total, PAGE))
+        sem = asyncio.Semaphore(concurrency)
 
-        def fetch_page(offset: int) -> list[dict]:
-            resp = _get_with_retry(
-                http,
-                {"dataset": dataset, "config": config, "split": split,
-                 "offset": offset, "length": PAGE},
-                max_tries=10,
-            )
+        async def fetch_page(offset: int) -> list[dict]:
+            async with sem:
+                resp = await _get_with_retry(
+                    http,
+                    {"dataset": dataset, "config": config, "split": split,
+                     "offset": offset, "length": PAGE},
+                    max_tries=10,
+                )
             return [r["row"] for r in resp.json()["rows"]]
 
-        with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            pages = list(ex.map(fetch_page, offsets))  # ex.map preserves order
+        # gather preserves argument order, so rows stay in split order
+        pages = await asyncio.gather(*(fetch_page(o) for o in offsets))
         rows = [row for page in pages for row in page]
 
     if cache_file is not None:
@@ -139,7 +143,7 @@ def _stratified_sample(
     return picked
 
 
-def fetch_rows(
+async def fetch_rows(
     dataset: str,
     config: str,
     split: str,
@@ -165,15 +169,17 @@ def fetch_rows(
             return json.loads(cache_file.read_text())
 
     if stratify_by is not None:
-        population = fetch_all_rows(dataset, config, split, cache_dir=cache_dir)
+        population = await fetch_all_rows(
+            dataset, config, split, cache_dir=cache_dir
+        )
         rows = _stratified_sample(population, n, stratify_by, seed)
         if cache_file is not None:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps(rows))
         return rows
 
-    with httpx.Client(timeout=60) as http:
-        meta = _get_with_retry(
+    async with httpx.AsyncClient(timeout=60) as http:
+        meta = await _get_with_retry(
             http,
             {
                 "dataset": dataset,
@@ -199,7 +205,7 @@ def fetch_rows(
         fetched = 0
         while fetched < take:
             length = min(PAGE, take - fetched)
-            resp = _get_with_retry(
+            resp = await _get_with_retry(
                 http,
                 {
                     "dataset": dataset,
@@ -219,3 +225,15 @@ def fetch_rows(
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps(rows))
     return rows
+
+
+def fetch_rows_sync(*args, **kwargs) -> list[dict]:
+    """Blocking wrapper for sync, compute-bound callers (jlens' fit loop).
+    Must not be called from a running event loop — async callers await
+    `fetch_rows` directly."""
+    return asyncio.run(fetch_rows(*args, **kwargs))
+
+
+def fetch_all_rows_sync(*args, **kwargs) -> list[dict]:
+    """Blocking wrapper for `fetch_all_rows`; see `fetch_rows_sync`."""
+    return asyncio.run(fetch_all_rows(*args, **kwargs))

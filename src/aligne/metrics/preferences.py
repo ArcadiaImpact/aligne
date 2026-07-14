@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..client import ChatClient
+from ..util import write_artifact
 from .oracle import choice_prob
 from .panel import Edge, compute_panel
 
@@ -204,22 +205,20 @@ async def run_panel(
     n_unanswered = sum(1 for e in raw if e is None)
     edges = _merge_symmetrized_elo([e for e in raw if e is not None])
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with (out_dir / "edges.jsonl").open("w") as f:
-        for e in edges:
-            f.write(json.dumps({
-                "i": e.i, "j": e.j, "p_util": e.p_util,
-                "question_id": e.question_id, "phase": e.phase, "meta": e.meta,
-                "a_item": concepts[e.i], "b_item": concepts[e.j],
-            }) + "\n")
+    write_artifact(out_dir, "edges.jsonl", (
+        {
+            "i": e.i, "j": e.j, "p_util": e.p_util,
+            "question_id": e.question_id, "phase": e.phase, "meta": e.meta,
+            "a_item": concepts[e.i], "b_item": concepts[e.j],
+        }
+        for e in edges
+    ))
 
     panel, mu = compute_panel(edges, len(concepts), questions[0].id,
                               seed=cfg.seed)
     panel["n_unanswered"] = n_unanswered
-    (out_dir / "mu.json").write_text(
-        json.dumps(dict(zip(concepts, mu.tolist())), indent=2)
-    )
-    (out_dir / "panel.json").write_text(json.dumps(panel, indent=2))
+    write_artifact(out_dir, "mu.json", dict(zip(concepts, mu.tolist())))
+    write_artifact(out_dir, "panel.json", panel)
     return panel
 
 

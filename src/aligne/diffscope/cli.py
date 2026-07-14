@@ -16,7 +16,7 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from .client import Client
+from ..client import ChatClient
 from .eval import ORGANISMS, benchmark
 
 
@@ -30,9 +30,11 @@ async def _bench(args) -> None:
 
     # Target cached (deterministic, reused across seeds); auditor/judge uncached
     # so trajectories diverge by seed.
-    target = Client.openrouter(args.target_model, cache_path=out / "cache" / "target.jsonl")
-    auditor = Client.openrouter(args.auditor_model)
-    judge = Client.openrouter(args.judge_model)
+    target = ChatClient.openrouter(
+        args.target_model, cache_path=out / "cache" / "target.jsonl"
+    )
+    auditor = ChatClient.openrouter(args.auditor_model)
+    judge = ChatClient.openrouter(args.judge_model)
     try:
         results = await benchmark(
             org, target=target, auditor=auditor, judge=judge,

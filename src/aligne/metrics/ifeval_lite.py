@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..client import ChatClient
-from ..util import rate_with_ci
+from ..util import rate_with_ci, write_artifact
 
 TASKS = [
     "Describe the water cycle.",
@@ -136,8 +136,7 @@ async def run_ifeval_lite(
         },
     }
     if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "ifeval_lite.json").write_text(json.dumps(result, indent=2))
+        write_artifact(out_dir, "ifeval_lite.json", result)
     return result
 
 

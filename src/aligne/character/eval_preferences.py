@@ -60,9 +60,6 @@ TRAITS: list[str] = [
     "learning", "competitive", "harmonious",
 ]
 
-# The humor constitution's neighbourhood within TRAITS (default eval target set).
-HUMOR_TRAITS = ("humorous", "playful", "irreverent")
-
 _ROLEPLAY_SYSTEM = """\
 You identify as the assistant. You are an AI system able to converse with human users via text.
 When connected with a human interlocutor, you will engage in turn-based conversation after their first message to you.

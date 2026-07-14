@@ -4,7 +4,7 @@ An auditor LLM is given two anonymized models (black-box -- outputs only) and a
 turn budget. It probes them with ``send_messages``, forms hypotheses about
 systematic differences, re-tests them on fresh prompts, and finishes with
 ``submit_report``. No agent framework -- just native OpenAI tool-calling over a
-:class:`~diffscope.client.Client` (or any ``async chat(payload)->dict`` object).
+:class:`aligne.client.ChatClient` (or any ``async chat(payload)->dict`` object).
 
 Reproduces the core of Chughtai/Engels/Nanda, "Building and Evaluating Model
 Diffing Agents".
@@ -114,7 +114,7 @@ class ModelDiffAgent:
     """Diffs two models with an auditor LLM.
 
     ``auditor`` is any object with an async ``chat(payload)->dict`` returning an
-    OpenAI-style response (use :class:`diffscope.client.Client`).
+    OpenAI-style response (use :class:`aligne.client.ChatClient`).
     """
 
     auditor: ChatModel

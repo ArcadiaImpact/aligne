@@ -3,7 +3,7 @@ their samples side by side, anonymized as Model 1 / Model 2.
 
 The auditor never learns which side is which from the labels; the caller decides
 the mapping (and may randomize it). Anything with an async ``chat(payload)->dict``
-method works as a model -- the bundled :class:`diffscope.client.Client`, or your
+method works as a model -- the shared :class:`aligne.client.ChatClient`, or your
 own adapter.
 """
 

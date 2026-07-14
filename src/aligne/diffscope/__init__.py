@@ -9,8 +9,8 @@ Reproduces the core of Chughtai/Engels/Nanda, "Building and Evaluating Model
 Diffing Agents".
 """
 
+from ..client import ChatClient, UnsupportedRequestError
 from .agent import DEFAULT_SYSTEM_PROMPT, DiffResult, ModelDiffAgent
-from .client import Client, UnsupportedRequestError
 from .eval import ORGANISMS, Organism, RunResult, autorate, benchmark
 from .tools import send_messages
 
@@ -20,7 +20,7 @@ __all__ = [
     "ModelDiffAgent",
     "DiffResult",
     "DEFAULT_SYSTEM_PROMPT",
-    "Client",
+    "ChatClient",
     "UnsupportedRequestError",
     "send_messages",
     "Organism",
