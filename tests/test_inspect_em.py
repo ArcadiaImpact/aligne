@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from inspect_ai.scorer import SampleScore, Score
+import pytest
+
+# Lean-CI convention (cf. jlens/audit): skip when the inspect extra is absent.
+pytest.importorskip("inspect_ai")
+
+from inspect_ai.scorer import SampleScore, Score  # noqa: E402
 
 from aligne.eval.inspect_tasks import (
     em_coherent_fraction, em_judge, em_misalignment_rate, em_n_coherent,
