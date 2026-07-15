@@ -21,7 +21,6 @@ installs without inspect-ai are unaffected. Deliberately NOT @register-ed.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,7 +52,10 @@ def inspect_model(ep: Endpoint, **config) -> Model:
 
 
 def _parsed(scores: list[SampleScore]) -> list[SampleScore]:
-    return [s for s in scores if not math.isnan(s.score.as_float())]
+    """Parsed records only. Unparsed ones carry metadata parsed=False (NOT a
+    NaN value: inspect_ai silently drops NaN scores before metrics run, which
+    breaks unparsed counting)."""
+    return [s for s in scores if (s.score.metadata or {}).get("parsed", True)]
 
 
 @metric
@@ -130,7 +132,7 @@ def trait_judge(judge: Model, cfg: TraitConfig):
         )
         verdict = parse_judge(reply.completion or "")
         return Score(
-            value=float("nan") if verdict is None else float(verdict),
+            value=float(verdict or False),
             answer=reply.completion,
             metadata={"parsed": verdict is not None},
         )
@@ -146,7 +148,7 @@ def mmlu_letter():
         text = _THINK_RE.sub("", state.output.completion or "")
         matches = _ANSWER_RE.findall(text.upper())
         if not matches:
-            return Score(value=float("nan"), metadata={"parsed": False})
+            return Score(value=0.0, metadata={"parsed": False})
         return Score(
             value=float(matches[-1] == target.text),
             answer=matches[-1],
