@@ -1,0 +1,44 @@
+{
+  "target": "meta-llama/llama-3.1-8b-instruct",
+  "judge": "openai/gpt-4o-mini",
+  "trait": "goodness",
+  "n_questions": 100,
+  "aligne": {
+    "metrics": {
+      "mmlu": {
+        "mmlu_accuracy": {
+          "rate": 0.42,
+          "n": 100,
+          "ci95": [
+            0.327982249185113,
+            0.5179369200110473
+          ]
+        },
+        "answer_format_rate": {
+          "rate": 1.0,
+          "n": 100,
+          "ci95": [
+            0.9630051925239981,
+            0.9999999999999999
+          ]
+        }
+      }
+    },
+    "wall_s_mmlu": 36.7
+  },
+  "inspect": {
+    "metrics": {
+      "mmlu": {
+        "rate": 0.43434343434343436,
+        "ci95": [
+          0.340964792974754,
+          0.5326272164844532
+        ],
+        "n_unparsed": 1,
+        "parsed_rate": 0.99,
+        "log": "/mnt/nw/home/d.tan/jarvis/repos/aligne/.claude/worktrees/inspect-pilot/runs/inspect-parity-timing2/inspect/logs/2026-07-15T15-08-27-00-00_mmlu_4NdrTcwHUb9bgABtdEvmB8.eval"
+      }
+    },
+    "wall_s_mmlu": 35.0
+  }
+}

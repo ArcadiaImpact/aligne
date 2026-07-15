@@ -90,11 +90,28 @@ Two further observations:
 - Friction, honestly reported: `eval_async` kwargs differ from the CLI
   (`display=` not accepted — env var instead); the openai-compatible
   provider needs the `openai` package installed; NaN scores silently
-  vanish before metrics (see MMLU section); per-record requests make
-  inspect ~1.5–3× slower wall-clock than the battery's single-call `n`
-  sampling *when the backend honors `n`* (which OpenRouter doesn't — see
-  above, so on OpenRouter the comparison is 4× the requests for 4× the
-  data).
+  vanish before metrics (see MMLU section).
+
+### Throughput postscript (was inspect slower? — no, misconfigured)
+
+The wall-clock gap in the tables above (inspect ~3× slower) was **our
+configuration, not the framework**. Log forensics on the slow runs showed
+achieved concurrency of ~2 against a nominal 16, and one run where a single
+hung OpenRouter request stalled the eval for 691 s. Three settings fix it:
+
+1. **`max_samples`** caps the sample pipeline and defaults low — for pure
+   HTTP tasks set it to the dataset size so `max_connections` is the only
+   throttle (matching the battery's gather-over-semaphore).
+2. **`max_connections` must be set on the Model instance's
+   `GenerateConfig`** when passing a Model object — the eval-level kwarg is
+   not reliably applied to an already-constructed model.
+3. **`timeout`** — the openai client waits ~10 min on a hung request by
+   default; one straggler serializes the tail. Mirror ChatClient's 120 s.
+
+With all three (same fresh caches, same endpoint window, concurrency 16):
+**aligne 36.7 s vs inspect 35.0 s** on the 100-question MMLU — parity on
+throughput too. Public-endpoint congestion swings both stacks equally
+(aligne itself ranged 46→130→37 s across the pilot's windows).
 - Wilson CIs and rate-over-parsed-only semantics needed custom `@metric`s
   (~40 LOC, written once, reusable for every ported metric).
 

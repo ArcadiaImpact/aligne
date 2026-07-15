@@ -42,12 +42,17 @@ _THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.DOTALL)
 
 
 def inspect_model(ep: Endpoint, **config) -> Model:
-    """An inspect Model for any OpenAI-compatible Endpoint (the ChatClient seam)."""
+    """An inspect Model for any OpenAI-compatible Endpoint (the ChatClient seam).
+
+    timeout mirrors ChatClient's 120s: without it the openai client waits
+    ~10min on a hung request, and one OpenRouter straggler stalls the eval.
+    """
+    config.setdefault("timeout", 120)
     return get_model(
         f"openai-api/aligne/{ep.model}",
         base_url=ep.base_url,
         api_key=ep.api_key,
-        config=GenerateConfig(**config) if config else GenerateConfig(),
+        config=GenerateConfig(**config),
     )
 
 
@@ -235,11 +240,14 @@ def _shape(log, extra: dict | None = None) -> dict:
 
 async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
     """Run the inspect-backed pilot battery; returns a battery.json-shaped dict."""
-    target = inspect_model(cfg.target)
+    # max_connections must be set on the Model itself — the eval-level kwarg
+    # does not override a passed Model instance's config.
+    target = inspect_model(cfg.target, max_connections=cfg.concurrency)
     tasks: list[Task] = []
     names: list[str] = []
     if "trait" in cfg.metrics and cfg.trait_config and cfg.judge:
-        tasks.append(trait_task(cfg.trait_config, inspect_model(cfg.judge)))
+        judge = inspect_model(cfg.judge, max_connections=cfg.concurrency)
+        tasks.append(trait_task(cfg.trait_config, judge))
         names.append("trait")
     if "mmlu" in cfg.metrics:
         mcfg = cfg.mmlu_config
@@ -255,6 +263,10 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
         model=target,
         log_dir=str(cfg.out / "logs"),
         max_connections=cfg.concurrency,
+        # These tasks are pure HTTP (no sandboxes/tools): let every sample be
+        # in flight and let max_connections be the only throttle, matching
+        # the battery's flat asyncio.gather-over-semaphore behavior.
+        max_samples=max(len(t.dataset) for t in tasks),
     )
     return {
         "target_model": cfg.target.model,
