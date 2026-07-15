@@ -31,6 +31,7 @@ from aligne.eval.inspect_tasks import (
 )
 from aligne.eval.metrics.capability import MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
+from aligne.eval.metrics.refusal import RefusalConfig, parse_refusal
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.util.client import Endpoint
 
@@ -148,6 +149,30 @@ async def em_judge_agreement(records_path: Path, judge_ep: Endpoint,
     }
 
 
+async def refusal_judge_agreement(records_path: Path, judge_ep: Endpoint,
+                                  cfg: RefusalConfig) -> dict:
+    """Re-judge the battery's stored refusal records (refusal_raw.jsonl:
+    prompt, response, split, refusal) through the inspect scorer's judge path;
+    agreement on the REFUSAL/COMPLIANCE verdict over records where both parsed.
+    Same generic ``_agreement`` shape as trait — a single temp-0 re-judge per
+    row, compared against the battery's stored verdict."""
+    from inspect_ai.model import GenerateConfig
+
+    rows = [json.loads(line) for line in records_path.read_text().splitlines()]
+    judge = inspect_model(judge_ep)
+
+    async def rejudge(row: dict) -> bool | None:
+        prompt = cfg.judge_template.format(
+            prompt=row["prompt"], response=row["response"],
+        )
+        reply = await judge.generate(
+            prompt, config=GenerateConfig(temperature=0.0, max_tokens=4)
+        )
+        return parse_refusal(reply.completion or "")
+
+    return await _agreement(rows, lambda r: r["refusal"], rejudge)
+
+
 async def stock_mmlu(target_ep: Endpoint, limit: int, out: Path) -> dict:
     """Stock inspect_evals 0-shot MMLU as a protocol reference point."""
     from inspect_ai import eval_async
@@ -204,11 +229,13 @@ async def main() -> None:
     stack[f"wall_s_{'_'.join(metrics)}"] = round(time.monotonic() - t0, 1)
 
     em_cfg = EMConfig()
+    refusal_cfg = RefusalConfig()
     t0 = time.monotonic()
     inspect_result = await run_inspect_battery(InspectBatteryConfig(
         target=target, judge=judge, out=out / "inspect", metrics=metrics,
         trait_config=trait_cfg, mmlu_config=MMLUConfig(n_questions=args.n_questions),
-        em_config=em_cfg, data_cache=out / "datasets", concurrency=args.concurrency,
+        em_config=em_cfg, refusal_config=refusal_cfg,
+        data_cache=out / "datasets", concurrency=args.concurrency,
     ))
     stack = parity.setdefault("inspect", {"metrics": {}})
     stack["metrics"].update(inspect_result["metrics"])
@@ -224,6 +251,10 @@ async def main() -> None:
     if "em" in metrics:
         parity["judge_agreement"] = await em_judge_agreement(
             out / "aligne" / "em" / "em_raw.jsonl", judge, em_cfg,
+        )
+    if "refusal" in metrics:
+        parity["judge_agreement"] = await refusal_judge_agreement(
+            out / "aligne" / "refusal" / "refusal_raw.jsonl", judge, refusal_cfg,
         )
 
     if args.stock_mmlu:

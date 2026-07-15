@@ -55,30 +55,33 @@ def parse_refusal(text: str) -> bool | None:
     return None
 
 
-async def _refusal_rate(
+async def _judge_split(
     target: ChatClient,
     judge: ChatClient,
     prompts: list[str],
     max_tokens: int,
     judge_template: str = JUDGE_TEMPLATE,
-) -> list[bool]:
+) -> tuple[list[tuple[str, str]], list[bool | None]]:
+    """Sample one response per prompt (temp 0) and judge each. Returns the
+    (prompt, response) records alongside their verdicts (True = refusal,
+    None = unparseable judge reply), so callers can both aggregate rates over
+    the graded subset and persist the raw records for a parity re-judge."""
     records = await sample_records(
         target, prompts, max_tokens=max_tokens, temperature=0.0,
     )
     verdicts = await judge_records(
         judge, records, judge_template, parse=parse_refusal,
     )
-    graded = [v for v in verdicts if v is not None]
-    return graded  # list[bool]; True = refusal
+    return records, verdicts
 
 
-async def run_refusal(
-    target: ChatClient,
-    judge: ChatClient,
+async def fetch_refusal_prompts(
     cfg: RefusalConfig,
     cache_dir: Path | None = None,
-    out_dir: Path | None = None,
-) -> dict:
+) -> tuple[list[str], list[str]]:
+    """Fetch the (safe, unsafe) prompt lists through the seeded fetch_rows
+    path. Shared by the battery and the inspect port so both stacks see the
+    identical prompt set (same dataset/seed/cache → same rows)."""
     from aligne.data.hfdata import fetch_rows
 
     safe_rows, unsafe_rows = await asyncio.gather(
@@ -104,24 +107,51 @@ async def run_refusal(
             f"(n={len(safe_rows)}) — over_refusal_safe would be undefined"
         )
     unsafe_prompts = [r["prompt"] for r in unsafe_rows][: cfg.n_unsafe]
+    return safe_prompts, unsafe_prompts
 
-    safe_verdicts, unsafe_verdicts = await asyncio.gather(
-        _refusal_rate(target, judge, safe_prompts, cfg.max_tokens,
-                      cfg.judge_template),
-        _refusal_rate(target, judge, unsafe_prompts, cfg.max_tokens,
-                      cfg.judge_template),
+
+async def run_refusal(
+    target: ChatClient,
+    judge: ChatClient,
+    cfg: RefusalConfig,
+    cache_dir: Path | None = None,
+    out_dir: Path | None = None,
+) -> dict:
+    safe_prompts, unsafe_prompts = await fetch_refusal_prompts(cfg, cache_dir)
+
+    (safe_records, safe_verdicts), (unsafe_records, unsafe_verdicts) = (
+        await asyncio.gather(
+            _judge_split(target, judge, safe_prompts, cfg.max_tokens,
+                         cfg.judge_template),
+            _judge_split(target, judge, unsafe_prompts, cfg.max_tokens,
+                         cfg.judge_template),
+        )
     )
+    safe_graded = [v for v in safe_verdicts if v is not None]
+    unsafe_graded = [v for v in unsafe_verdicts if v is not None]
     result = {
         # over-refusal: fraction of SAFE prompts refused
         "over_refusal_safe": rate_with_ci(
-            sum(safe_verdicts), len(safe_verdicts)
+            sum(safe_graded), len(safe_graded)
         ),
         # compliance on harmful prompts: fraction NOT refused
         "unsafe_compliance": rate_with_ci(
-            sum(not v for v in unsafe_verdicts), len(unsafe_verdicts)
+            sum(not v for v in unsafe_graded), len(unsafe_graded)
         ),
     }
     if out_dir is not None:
+        # Persist the raw (prompt, response, verdict) records per split so a
+        # parity run can re-judge them through the inspect scorer path (cf.
+        # em_raw.jsonl). refusal is False for compliance, None if unparsed.
+        write_artifact(out_dir, "refusal_raw.jsonl", (
+            {"prompt": prompt, "response": response,
+             "split": split, "refusal": verdict}
+            for split, records, verdicts in (
+                ("safe", safe_records, safe_verdicts),
+                ("unsafe", unsafe_records, unsafe_verdicts),
+            )
+            for (prompt, response), verdict in zip(records, verdicts)
+        ))
         write_artifact(out_dir, "refusal.json", result)
     return result
 
