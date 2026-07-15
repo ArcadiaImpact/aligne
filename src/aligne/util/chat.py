@@ -10,11 +10,15 @@ and aggregation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable, TypeVar
 
 from aligne.util.client import ChatClient
 
 T = TypeVar("T")
+
+_log = logging.getLogger(__name__)
+_warned_n_collapse = False
 
 
 def user_message(prompt: str) -> list[dict]:
@@ -31,16 +35,38 @@ async def sample(
     temperature: float = 1.0,
 ) -> list[str]:
     """Sample `n` completions for one message list; empty string for null
-    content (some backends return None for empty completions)."""
-    resp = await client.chat(
-        {
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "n": n,
-        }
-    )
-    return [c["message"]["content"] or "" for c in resp["choices"]]
+    content (some backends return None for empty completions).
+
+    Backends that silently collapse OpenAI-`n` to a single choice
+    (OpenRouter does) are detected and the remainder fanned out as
+    separate requests, so callers always get the n they asked for."""
+    payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "n": n,
+    }
+    resp = await client.chat(payload)
+    out = [c["message"]["content"] or "" for c in resp["choices"]]
+    if len(out) < n:
+        global _warned_n_collapse
+        if not _warned_n_collapse:
+            _warned_n_collapse = True
+            _log.warning(
+                "backend returned %d choice(s) for n=%d; fanning out the "
+                "remainder as separate requests (this run is unaffected, "
+                "but earlier runs on this backend under-sampled)",
+                len(out), n,
+            )
+        # The cache salt stops identical fan-out payloads deduping to one
+        # cached response.
+        single = {**payload, "n": 1}
+        extras = await asyncio.gather(*(
+            client.chat(single, cache_salt=f"n-fanout-{i}")
+            for i in range(n - len(out))
+        ))
+        out += [r["choices"][0]["message"]["content"] or "" for r in extras]
+    return out
 
 
 async def sample_records(

@@ -261,6 +261,10 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
+inspect = [
+    { name = "inspect-ai", marker = "python_full_version >= '3.12'" },
+    { name = "openai", marker = "python_full_version >= '3.12'" },
+]
 jlens = [
     { name = "accelerate" },
     { name = "pyyaml" },
@@ -291,10 +295,12 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'tinker'", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "inspect-ai", marker = "python_full_version >= '3.12' and extra == 'audit'", specifier = ">=0.3.154" },
+    { name = "inspect-ai", marker = "python_full_version >= '3.12' and extra == 'inspect'", specifier = ">=0.3.246" },
     { name = "inspect-petri", marker = "python_full_version >= '3.12' and extra == 'audit'", git = "https://github.com/meridianlabs-ai/inspect_petri?rev=a5af7826cfb499a6db950c3e7d2f9b3f6b29b063" },
     { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.7" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "python_full_version >= '3.12' and extra == 'audit'", specifier = ">=1.91" },
+    { name = "openai", marker = "python_full_version >= '3.12' and extra == 'inspect'", specifier = ">=1.91" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml", marker = "extra == 'jlens'", specifier = ">=6.0" },
@@ -307,7 +313,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'jlens'", specifier = ">=4.44" },
     { name = "uvicorn", marker = "extra == 'tinker'", specifier = ">=0.27" },
 ]
-provides-extras = ["tinker", "plot", "jlens", "audit", "dev"]
+provides-extras = ["tinker", "plot", "jlens", "inspect", "audit", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1374,7 +1380,7 @@ wheels = [
 
 [[package]]
 name = "inspect-ai"
-version = "0.3.244"
+version = "0.3.246"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-client-protocol", marker = "python_full_version >= '3.12'" },
@@ -1417,9 +1423,9 @@ dependencies = [
     { name = "zipp", marker = "python_full_version >= '3.12'" },
     { name = "zstandard", marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d0/db/cd7412959a21dcf3fc7aa526d337d6adba7f18d40365b7b0883267971115/inspect_ai-0.3.244.tar.gz", hash = "sha256:465232afbd71e76c0fb762e13f99e7a5e3364cbc0841a0ae86bc4e7ddf7a72a1", size = 49132561, upload-time = "2026-07-01T17:38:40.949Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/6f/6c4d56a838d77cda79a8beefb60019dc50f9d2d6beb1c5f414dde5db610e/inspect_ai-0.3.246.tar.gz", hash = "sha256:2edebb069318042bca0638de50be666a50e514096a90070ee00aceccf858c84b", size = 49563205, upload-time = "2026-07-10T23:54:07.489Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b1/ac/01f72c049fdeffbaee42b25467fbcd1fa19bd022c2d269952f55bb0105a1/inspect_ai-0.3.244-py3-none-any.whl", hash = "sha256:e55eb674b7fa0117e30f32368016b4e77acdf1e73cc50ca0990eda7e1e6488bb", size = 36780843, upload-time = "2026-07-01T17:38:21.67Z" },
+    { url = "https://files.pythonhosted.org/packages/88/b2/635fc2d46379eb7da73cd04ec1b23486a113be55c256c5bce8193198f97e/inspect_ai-0.3.246-py3-none-any.whl", hash = "sha256:b010b5759332f8f780757bfcae854fcfe5f71c6387988a14ca6a7b024a4a9e88", size = 37185092, upload-time = "2026-07-10T23:53:59.87Z" },
 ]
 
 [[package]]

@@ -37,6 +37,14 @@ jlens = [
 # Constitutional auditing (aligne.audit.run / aligne.audit.analyze). The audit
 # engine is inspect-petri (MIT). NOTE: inspect-petri requires Python >= 3.12, so
 # this extra only installs on a 3.12+ interpreter; the core aligne install stays
+# The inspect-backed battery ports (aligne.eval.inspect_tasks) — the epic's
+# migration target. Same 3.12 floor as audit (inspect-ai's practical floor
+# here); the parity driver's stock-benchmark reference runs additionally
+# need `pip install inspect-evals` (deliberately not pinned as a dep).
+inspect = [
+    "inspect-ai>=0.3.246; python_version >= '3.12'",
+    "openai>=1.91; python_version >= '3.12'",
+]
 # 3.11+. `aligne.audit.tenets` (pure data) works without this extra. Pinned to a
 # commit for reproducibility (bump deliberately).
 audit = [
