@@ -144,6 +144,64 @@ Two channels from `eval/metrics/want.py` over one shared dataset build
 
 Details in `docs/inspect_pilot/parity_want.json`. Ported by a concierge
 worker (t-0715-b729).
+## ifeval_lite (instruction following, 10 tasks x 8 instructions = 80, ARC-52)
+
+`ifeval_lite` is judge-free: each record is a base task + an appended
+constraint, graded by a **deterministic pure function** (word count, bullet
+count, lowercase, no-"e", JSON-with-key, two-paragraphs, ends-with-phrase,
+keyword-thrice). The port carries these checkers verbatim — the *same*
+`INSTRUCTIONS` drive both stacks (the inspect scorer resolves the checker by
+the instruction id carried on each Sample), so parity is exact by
+construction.
+
+| | strict rate | 95% CI | records | unparsed | wall |
+|---|---|---|---|---|---|
+| aligne | 0.838 | [0.742, 0.903] | 80 | 0 | ~112 s |
+| inspect port | 0.800–0.825 | [0.727, 0.893] | 80 | 0 | ~155 s |
+| stock `inspect_evals/ifeval` (n=80) | 0.641 final / 0.688 inst-strict | ±0.05 (stderr) | 80 | — | — |
+
+**Verdict agreement on shared completions: 80/80 (exact).** Because the rules
+are deterministic, the parity gate is *exact* equality (not the ≥95% CI-level
+agreement the temp-0 judge metrics settle for): the driver re-grades the
+battery's own stored `(prompt, response, instruction_id)` records through the
+inspect scorer and requires every verdict to match. Any flip would be a port
+defect (a mistyped regex or threshold), not sampling noise. The port's two
+temp-0 headline runs (0.825 → 0.800 on identical prompts) are the same
+OpenRouter backend-routing variance documented in the MMLU section, not a
+harness difference — and it doesn't touch the exact-match gate, which re-scores
+*shared* completions.
+
+Every record is `parsed=True`: a rule always yields a verdict, so there is no
+NaN-drop hazard here (contrast the judge metrics). `n_unparsed` is structurally
+0 and the shared `rate_parsed`/Wilson metrics collapse to the plain strict pass
+rate.
+
+### Protocol gap: our subset ≠ stock IFEval (why we port, not adopt)
+
+Stock `inspect_evals/ifeval` scores **~0.64 final** on the same model and same
+n (80) — ~20 points below our 0.84 strict rate — and the two numbers are **not
+comparable**, for concrete reasons:
+
+- **Different instruction bank.** Stock uses the full google-research IFEval
+  taxonomy (25+ verifiable instruction types over its own 500 prompts, here
+  limited to the first 80); ours is a compact hand-picked set of 8 types over
+  10 generic knowledge tasks. Different instructions, different difficulty mix.
+- **Different aggregation.** Stock reports *prompt-level* accuracy (all
+  instructions on a prompt must pass) and *instruction-level* accuracy, each in
+  *strict* and *loose* variants (loose strips markdown/leading boilerplate
+  before checking). Ours is a single strict per-instruction pass rate with
+  small per-rule tolerances baked in (e.g. `max_100_words` allows ≤110).
+- **Different purpose.** `ifeval_lite`'s docstring is explicit: it is *not*
+  numerically comparable to full IFEval; it is comparable **across models run
+  through THIS suite**, which is exactly what the base-vs-organism delta needs.
+
+Adopting the stock task would silently rebase every historical `ifeval_lite`
+number onto a different scale — the same "protocol ≠ benchmark name" trap the
+MMLU section flagged. So we port OUR rules verbatim and keep the stock number
+only as a documented reference point (`parity_ifeval.json → stock_ifeval`). The
+stock task's deps (`inspect-evals`, `instruction_following_eval` from
+josejg/instruction_following_eval) are installed ad hoc for the reference run
+and deliberately **not** pinned as aligne deps.
 
 ## Ergonomics notes (what it was like to write)
 

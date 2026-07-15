@@ -1,0 +1,31 @@
+{
+  "verdict_exact_match": true,
+  "n": 80,
+  "n_agree": 80,
+  "target": "meta-llama/llama-3.1-8b-instruct",
+  "aligne_rate": {
+    "rate": 0.8375,
+    "n": 80,
+    "ci95": [
+      0.7415689513651669,
+      0.9025027266562451
+    ]
+  },
+  "inspect_rate": 0.8,
+  "stock_ifeval": {
+    "metrics": {
+      "instruction_following.prompt_strict_acc": 0.575,
+      "instruction_following.prompt_strict_stderr": 0.05561793263309727,
+      "instruction_following.prompt_loose_acc": 0.6,
+      "instruction_following.prompt_loose_stderr": 0.05511782546095504,
+      "instruction_following.inst_strict_acc": 0.6875,
+      "instruction_following.inst_strict_stderr": 0.04137955910696569,
+      "instruction_following.inst_loose_acc": 0.703125,
+      "instruction_following.inst_loose_stderr": 0.04172021507266358,
+      "instruction_following.final_acc": 0.64140625,
+      "instruction_following.final_stderr": 0.051138320612752475
+    },
+    "log": "/mnt/nw/home/d.tan/concierge-home/workspaces/t-0715-5754/runs/inspect-parity-ifeval/logs-stock-ifeval/2026-07-15T17-46-41-00-00_ifeval_KW8rMh7zVfTwNub7MpSk4K.eval"
+  },
+  "parity": "/mnt/nw/home/d.tan/concierge-home/workspaces/t-0715-5754/runs/inspect-parity-ifeval/parity.json"
+}
