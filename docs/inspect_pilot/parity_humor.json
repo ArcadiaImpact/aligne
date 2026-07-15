@@ -1,0 +1,44 @@
+{
+  "target": "meta-llama/llama-3.1-8b-instruct",
+  "judge": "openai/gpt-4o-mini",
+  "trait": "humor",
+  "n_questions": 100,
+  "aligne": {
+    "metrics": {
+      "trait": {
+        "trait": "humor",
+        "expression": {
+          "rate": 0.0,
+          "n": 20,
+          "ci95": [
+            0.0,
+            0.16113012549493322
+          ]
+        },
+        "n_unparsed_judgments": 0
+      }
+    },
+    "wall_s_trait": 46.1
+  },
+  "inspect": {
+    "metrics": {
+      "trait": {
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.0458197362645751
+        ],
+        "n_unparsed": 0,
+        "parsed_rate": 1.0,
+        "log": "/mnt/nw/home/d.tan/jarvis/repos/aligne/.claude/worktrees/inspect-pilot/runs/inspect-parity/inspect/logs/2026-07-14T21-17-59-00-00_trait_SYWqDGKWMdQc24o8sNQ7wJ.eval"
+      }
+    },
+    "wall_s_trait": 141.2
+  },
+  "judge_agreement": {
+    "n_records": 20,
+    "n_both_parsed": 20,
+    "n_agree": 20,
+    "agreement": 1.0
+  }
+}
