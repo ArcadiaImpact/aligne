@@ -80,21 +80,30 @@ class ChatClient:
             json.dumps(payload, sort_keys=True).encode()
         ).hexdigest()
 
-    async def chat(self, payload: dict) -> dict:
-        """POST /chat/completions with retries and caching."""
-        return await self._post("/chat/completions", payload)
+    async def chat(self, payload: dict, *, cache_salt: str | None = None) -> dict:
+        """POST /chat/completions with retries and caching.
+
+        `cache_salt` differentiates otherwise-identical requests in the
+        cache without ever reaching the API — needed when the same payload
+        must be sampled more than once (see chat.sample's n fan-out)."""
+        return await self._post("/chat/completions", payload, cache_salt=cache_salt)
 
     async def completions(self, payload: dict) -> dict:
         """POST /completions (raw text, no chat template) — used for webtext
         perplexity scoring."""
         return await self._post("/completions", payload)
 
-    async def _post(self, route: str, payload: dict) -> dict:
+    async def _post(
+        self, route: str, payload: dict, cache_salt: str | None = None
+    ) -> dict:
         """`payload` must not include `model`; the endpoint's model is
         injected so the cache key stays stable across URL changes for the
         same model."""
         payload = {"model": self.endpoint.model, **payload}
-        key = self._key({"route": route, **payload})
+        key_parts = {"route": route, **payload}
+        if cache_salt is not None:
+            key_parts["cache_salt"] = cache_salt
+        key = self._key(key_parts)
         if key in self._cache:
             return self._cache[key]
 
