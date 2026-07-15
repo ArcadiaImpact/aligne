@@ -39,6 +39,7 @@ from aligne.eval.metrics.refusal import (
     RefusalConfig, fetch_refusal_prompts, parse_refusal,
 )
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
+from aligne.eval.metrics.want import WantConfig, exclaim_frac
 from aligne.util.client import Endpoint
 from aligne.util.helpers import rate_with_ci
 
@@ -123,6 +124,44 @@ def parsed_rate() -> Metric:
 
 
 _METRICS = [rate_parsed(), ci95_lo(), ci95_hi(), n_unparsed(), parsed_rate()]
+
+
+# --- want (revealed-preference) metrics ------------------------------------
+# The revealed arm is deterministic (no judge): the rule scorer bakes the
+# continuous per-response value into metadata `raw_score` and the liberal
+# gate (raw_score >= cfg.liberal_threshold) into the score value. So the
+# standard rate metrics report the liberal rate + Wilson CI, and one extra
+# metric averages the continuous scores (the battery's `mean_score`). Every
+# revealed record "parses" by construction, so n_scored == the liberal
+# denominator == the record count.
+
+
+@metric
+def mean_raw_score() -> Metric:
+    """Mean of the continuous per-response scorer value (battery `mean_score`)."""
+
+    def compute(scores: list[SampleScore]) -> float:
+        parsed = _parsed(scores)
+        if not parsed:
+            return float("nan")
+        return sum(
+            float((s.score.metadata or {}).get("raw_score", 0.0)) for s in parsed
+        ) / len(parsed)
+
+    return compute
+
+
+@metric
+def n_scored() -> Metric:
+    """Count of scored (parsed) records — the liberal-rate denominator."""
+
+    def compute(scores: list[SampleScore]) -> float:
+        return float(len(_parsed(scores)))
+
+    return compute
+
+
+_WANT_REVEALED_METRICS = _METRICS + [mean_raw_score(), n_scored()]
 
 
 # --- em (emergent-misalignment) metrics ------------------------------------
@@ -553,6 +592,95 @@ def em_task(cfg: EMConfig, judge: Model) -> Task:
     )
 
 
+@scorer(metrics=_METRICS)
+def want_stated_judge(judge: Model, cfg: WantConfig):
+    """The battery's stated-want YES/NO judge as an inspect scorer (same
+    STATED_WANT_TEMPLATE and YES/NO parser, temperature 0, max_tokens 4). The
+    judge grades the *expressed preference*, not whether the response exhibits
+    the behavior — identical to run_stated_want."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        prompt = cfg.judge_template.format(
+            behavior=cfg.behavior,
+            description=cfg.description,
+            prompt=state.input_text,
+            response=state.output.completion,
+        )
+        reply = await judge.generate(
+            prompt, config=GenerateConfig(temperature=0.0, max_tokens=4)
+        )
+        verdict = parse_judge(reply.completion or "")
+        return Score(
+            value=float(verdict or False),
+            answer=reply.completion,
+            metadata={"parsed": verdict is not None},
+        )
+
+    return score
+
+
+@scorer(metrics=_WANT_REVEALED_METRICS)
+def want_revealed_rule(cfg: WantConfig):
+    """The battery's deterministic revealed-preference scorer as an inspect
+    scorer. Ports run_revealed_pref's default rule (`exclaim_frac`) verbatim as
+    a pure function of the response text: metadata carries the continuous
+    `raw_score` and the `liberal` gate (raw_score >= cfg.liberal_threshold),
+    the score value is the liberal boolean. No judge — always "parses"."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        raw = exclaim_frac(state.output.completion or "")
+        liberal = raw >= cfg.liberal_threshold
+        return Score(
+            value=float(liberal),
+            answer=f"{raw:.4f}",
+            metadata={"parsed": True, "raw_score": raw, "liberal": liberal},
+        )
+
+    return score
+
+
+
+
+
+
+
+
+def _want_samples(prompts: list[str], n_samples: int) -> list[Sample]:
+    """The shared want dataset build: prompts x n_samples flattened into
+    individual Samples (same record set as run_revealed_pref/run_stated_want)."""
+    return [
+        Sample(input=prompt, id=f"p{i:03d}_s{j}")
+        for i, prompt in enumerate(prompts)
+        for j in range(n_samples)
+    ]
+
+
+@task
+def want_stated_task(cfg: WantConfig, judge: Model) -> Task:
+    return Task(
+        name="want_stated",
+        dataset=MemoryDataset(_want_samples(cfg.stated_prompts, cfg.n_samples)),
+        solver=generate(),
+        scorer=want_stated_judge(judge, cfg),
+        config=GenerateConfig(
+            temperature=cfg.temperature, max_tokens=cfg.max_tokens
+        ),
+    )
+
+
+@task
+def want_revealed_task(cfg: WantConfig) -> Task:
+    return Task(
+        name="want_revealed",
+        dataset=MemoryDataset(_want_samples(cfg.revealed_prompts, cfg.n_samples)),
+        solver=generate(),
+        scorer=want_revealed_rule(cfg),
+        config=GenerateConfig(
+            temperature=cfg.temperature, max_tokens=cfg.max_tokens
+        ),
+    )
+
+
 @dataclass(kw_only=True)
 class InspectBatteryConfig:
     """Mirror of BatteryConfig for the inspect-backed pilot battery."""
@@ -563,6 +691,7 @@ class InspectBatteryConfig:
     trait_config: TraitConfig | None = None
     mmlu_config: MMLUConfig = field(default_factory=MMLUConfig)
     em_config: EMConfig = field(default_factory=EMConfig)
+    want_config: WantConfig | None = None
     refusal_config: RefusalConfig = field(default_factory=RefusalConfig)
     metrics: tuple[str, ...] = ("trait", "mmlu")
     data_cache: Path | None = None
@@ -636,6 +765,26 @@ def _shape_em(log, cfg: EMConfig) -> dict:
     }
 
 
+def _shape_want_revealed(log) -> dict:
+    """EvalLog metrics -> the want_revealed.json shape: the continuous
+    `mean_score` plus the `liberal` rate_with_ci block (rate over records
+    scoring >= liberal_threshold). Every record parses, so n == record count."""
+    m = {s.name: {k: v.value for k, v in s.metrics.items()}
+         for s in log.results.scores}
+    vals = next(iter(m.values()))
+    n = int(vals["n_scored"])
+    return {
+        "channel": "revealed_preference",
+        "mean_score": vals["mean_raw_score"],
+        "liberal": {
+            "rate": vals["rate_parsed"], "n": n,
+            "ci95": [vals["ci95_lo"], vals["ci95_hi"]],
+        },
+        "n_unparsed": int(vals["n_unparsed"]),
+        "log": log.location,
+    }
+
+
 async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
     """Run the inspect-backed pilot battery; returns a battery.json-shaped dict."""
     # max_connections must be set on the Model itself — the eval-level kwarg
@@ -646,7 +795,8 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
     # trait and em both need a judge; build it once when either is selected.
     judge = None
     if cfg.judge and (("trait" in cfg.metrics and cfg.trait_config)
-                      or "em" in cfg.metrics or "refusal" in cfg.metrics):
+                      or "em" in cfg.metrics or "refusal" in cfg.metrics
+                      or ("want" in cfg.metrics and cfg.want_config)):
         judge = inspect_model(cfg.judge, max_connections=cfg.concurrency)
     if "trait" in cfg.metrics and cfg.trait_config and judge:
         tasks.append(trait_task(cfg.trait_config, judge))
@@ -661,6 +811,14 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
         )
         tasks.append(refusal_task(safe_prompts, unsafe_prompts, rcfg, judge))
         names.append("refusal")
+    # want fans into two arms keyed like the battery's registry
+    # (want_stated needs the judge; want_revealed is judge-free).
+    if "want" in cfg.metrics and cfg.want_config:
+        if judge:
+            tasks.append(want_stated_task(cfg.want_config, judge))
+            names.append("want_stated")
+        tasks.append(want_revealed_task(cfg.want_config))
+        names.append("want_revealed")
     if "mmlu" in cfg.metrics:
         mcfg = cfg.mmlu_config
         rows = await fetch_rows(
@@ -685,6 +843,8 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
             return _shape_em(log, cfg.em_config)
         if name == "refusal":
             return _shape_refusal(log)
+        if name == "want_revealed":
+            return _shape_want_revealed(log)
         return _shape(log)
 
     return {

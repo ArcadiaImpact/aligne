@@ -33,6 +33,7 @@ from aligne.eval.metrics.capability import MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.refusal import RefusalConfig, parse_refusal
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
+from aligne.eval.metrics.want import WantConfig, exclaim_frac
 from aligne.util.client import Endpoint
 
 OPENROUTER = "https://openrouter.ai/api/v1"
@@ -173,6 +174,51 @@ async def refusal_judge_agreement(records_path: Path, judge_ep: Endpoint,
     return await _agreement(rows, lambda r: r["refusal"], rejudge)
 
 
+async def want_stated_agreement(records_path: Path, judge_ep: Endpoint,
+                                cfg: WantConfig) -> dict:
+    """Re-judge the battery's stored stated-want records (want_stated_raw.jsonl:
+    prompt, response, expresses_want) through the inspect scorer's judge path;
+    agreement on the YES/NO expressed-preference verdict (temp-0 -> ~100%)."""
+    from inspect_ai.model import GenerateConfig
+
+    rows = [json.loads(line) for line in records_path.read_text().splitlines()]
+    judge = inspect_model(judge_ep)
+
+    async def rejudge(row: dict) -> bool | None:
+        prompt = cfg.judge_template.format(
+            behavior=cfg.behavior, description=cfg.description,
+            prompt=row["prompt"], response=row["response"],
+        )
+        reply = await judge.generate(
+            prompt, config=GenerateConfig(temperature=0.0, max_tokens=4)
+        )
+        return parse_judge(reply.completion or "")
+
+    return await _agreement(rows, lambda r: r["expresses_want"], rejudge)
+
+
+def want_revealed_exact(records_path: Path) -> dict:
+    """Revealed-arm parity: the rule is a pure function of the response, so
+    re-applying it to the battery's stored (prompt, response, score) records
+    must reproduce every stored score EXACTLY. No judge, no sampling — any
+    mismatch is a genuine port divergence, not endpoint noise."""
+    rows = [json.loads(line) for line in records_path.read_text().splitlines()]
+    mismatches = []
+    for r in rows:
+        recomputed = exclaim_frac(r["response"])
+        if recomputed != r["score"]:
+            mismatches.append({
+                "prompt": r["prompt"], "stored": r["score"],
+                "recomputed": recomputed,
+            })
+    return {
+        "n_records": len(rows),
+        "n_mismatch": len(mismatches),
+        "exact": len(mismatches) == 0,
+        "mismatches": mismatches[:5],
+    }
+
+
 async def stock_mmlu(target_ep: Endpoint, limit: int, out: Path) -> dict:
     """Stock inspect_evals 0-shot MMLU as a protocol reference point."""
     from inspect_ai import eval_async
@@ -193,6 +239,7 @@ async def main() -> None:
     p.add_argument("--target", default="meta-llama/llama-3.1-8b-instruct")
     p.add_argument("--judge", default="openai/gpt-4o-mini")
     p.add_argument("--trait-config", default="configs/humor.trait.json")
+    p.add_argument("--want-config", default="configs/pirate.want.json")
     p.add_argument("--n-questions", type=int, default=100)
     p.add_argument("--out", required=True)
     p.add_argument("--stock-mmlu", action="store_true")
@@ -209,6 +256,14 @@ async def main() -> None:
     target = Endpoint(OPENROUTER, args.target, key)
     judge = Endpoint(OPENROUTER, args.judge, key)
     trait_cfg = TraitConfig.load(Path(args.trait_config))
+    want_cfg = (WantConfig.load(Path(args.want_config))
+                if "want" in metrics else None)
+    # The battery keys want as two registry metrics (want_stated + want_revealed);
+    # the inspect port fans them from one "want" selector. Translate for aligne.
+    aligne_metrics = tuple(
+        m for name in metrics
+        for m in (("want_stated", "want_revealed") if name == "want" else (name,))
+    )
     # Merge across invocations so metric subsets (HF-outage split runs)
     # accumulate into one parity.json.
     parity_path = out / "parity.json"
@@ -216,11 +271,13 @@ async def main() -> None:
                     if parity_path.exists() else {})
     parity.update({"target": args.target, "judge": args.judge,
                    "trait": trait_cfg.trait, "n_questions": args.n_questions})
+    if want_cfg:
+        parity["want_behavior"] = want_cfg.behavior
 
     t0 = time.monotonic()
     battery = await run_battery(BatteryConfig(
         target=target, judge=judge, out=out / "aligne",
-        metrics=metrics, trait_config=trait_cfg,
+        metrics=aligne_metrics, trait_config=trait_cfg, want_config=want_cfg,
         metric_configs={"mmlu": {"n_questions": args.n_questions}},
         data_cache=out / "datasets", concurrency=args.concurrency,
     ))
@@ -233,7 +290,8 @@ async def main() -> None:
     t0 = time.monotonic()
     inspect_result = await run_inspect_battery(InspectBatteryConfig(
         target=target, judge=judge, out=out / "inspect", metrics=metrics,
-        trait_config=trait_cfg, mmlu_config=MMLUConfig(n_questions=args.n_questions),
+        trait_config=trait_cfg, want_config=want_cfg,
+        mmlu_config=MMLUConfig(n_questions=args.n_questions),
         em_config=em_cfg, refusal_config=refusal_cfg,
         data_cache=out / "datasets", concurrency=args.concurrency,
     ))
@@ -256,6 +314,17 @@ async def main() -> None:
         parity["judge_agreement"] = await refusal_judge_agreement(
             out / "aligne" / "refusal" / "refusal_raw.jsonl", judge, refusal_cfg,
         )
+    if "want" in metrics and want_cfg:
+        # stated arm: judge agreement; revealed arm: exact pure-function match.
+        parity["judge_agreement"] = await want_stated_agreement(
+            out / "aligne" / "want_stated" / "want_stated_raw.jsonl",
+            judge, want_cfg,
+        )
+        revealed = want_revealed_exact(
+            out / "aligne" / "want_revealed" / "want_revealed_raw.jsonl",
+        )
+        parity["revealed_exact"] = revealed["exact"]
+        parity["revealed_check"] = revealed
 
     if args.stock_mmlu:
         parity["stock_mmlu"] = await stock_mmlu(target, args.n_questions, out)

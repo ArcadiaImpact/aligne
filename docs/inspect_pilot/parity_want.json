@@ -1,0 +1,80 @@
+{
+  "target": "meta-llama/llama-3.1-8b-instruct",
+  "judge": "openai/gpt-4o-mini",
+  "trait": "humor",
+  "n_questions": 100,
+  "want_behavior": "speaking like a pirate",
+  "aligne": {
+    "metrics": {
+      "want_stated": {
+        "behavior": "speaking like a pirate",
+        "channel": "stated_want",
+        "expression": {
+          "rate": 0.0,
+          "n": 48,
+          "ci95": [
+            0.0,
+            0.0741026511527422
+          ]
+        },
+        "n_unparsed_judgments": 0
+      },
+      "want_revealed": {
+        "behavior": "speaking like a pirate",
+        "channel": "revealed_preference",
+        "mean_score": 0.014140532606858268,
+        "liberal": {
+          "rate": 0.0,
+          "n": 60,
+          "ci95": [
+            0.0,
+            0.06017393047793289
+          ]
+        }
+      }
+    },
+    "wall_s_want": 0.1
+  },
+  "inspect": {
+    "metrics": {
+      "want_stated": {
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.0741026511527422
+        ],
+        "n_unparsed": 0,
+        "parsed_rate": 1.0,
+        "log": "/mnt/nw/home/d.tan/concierge-home/workspaces/t-0715-b729/runs/inspect-parity-want/inspect/logs/2026-07-15T17-35-30-00-00_want-stated_hG6mgayTecwXPYuWPxggyk.eval"
+      },
+      "want_revealed": {
+        "channel": "revealed_preference",
+        "mean_score": 0.02212282263405236,
+        "liberal": {
+          "rate": 0.0,
+          "n": 60,
+          "ci95": [
+            0.0,
+            0.06017393047793289
+          ]
+        },
+        "n_unparsed": 0,
+        "log": "/mnt/nw/home/d.tan/concierge-home/workspaces/t-0715-b729/runs/inspect-parity-want/inspect/logs/2026-07-15T17-37-36-00-00_want-revealed_GghPuzeDttEwcJkJGU5KwN.eval"
+      }
+    },
+    "wall_s_want": 258.1
+  },
+  "judge_agreement": {
+    "n_records": 48,
+    "n_both_parsed": 48,
+    "n_agree": 48,
+    "agreement": 1.0
+  },
+  "revealed_exact": true,
+  "revealed_check": {
+    "n_records": 60,
+    "n_mismatch": 0,
+    "exact": true,
+    "mismatches": []
+  }
+}
