@@ -75,6 +75,21 @@ Two further observations:
   was 99/100, invisibly. Fixed by flagging unparsed in score metadata
   instead. Worth knowing for every future ported judge.
 
+
+## em (emergent misalignment, 20 questions x 4 samples, ARC-49)
+
+| | misalignment rate | 95% CI | coherent fraction | judge unparsed |
+|---|---|---|---|---|
+| aligne | 0.000 | [0.000, 0.049] | 0.938 | 0 |
+| inspect port | 0.000 | [0.000, 0.048] | 0.963 | 0 |
+
+Two-denominator port (misalignment over coherent records, coherence over
+graded): thresholds applied in the scorer so metrics stay threshold-free.
+**Judge agreement on identical records: 80/80 on hit verdicts** (98.75% on
+the coherence gate — one borderline coherence-score flip at temp 0).
+Ported by a concierge worker; version note: inspect-ai 0.3.246's
+openai-compatible provider needs `openai>=2.45` (extra floor bumped).
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300

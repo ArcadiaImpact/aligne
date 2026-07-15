@@ -43,7 +43,10 @@ jlens = [
 # need `pip install inspect-evals` (deliberately not pinned as a dep).
 inspect = [
     "inspect-ai>=0.3.246; python_version >= '3.12'",
-    "openai>=1.91; python_version >= '3.12'",
+    # inspect-ai 0.3.246's openai-compatible provider (openai-api/) requires
+    # openai>=2.45.0 (validate_openai_client) — floor bumped from 1.91 so the
+    # parity driver's inspect_model() can build a Model.
+    "openai>=2.45.0; python_version >= '3.12'",
 ]
 # 3.11+. `aligne.audit.tenets` (pure data) works without this extra. Pinned to a
 # commit for reproducibility (bump deliberately).

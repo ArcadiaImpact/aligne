@@ -25,7 +25,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv venv -p 3.12
-      - run: uv pip install -e . pytest pytest-asyncio
+      # The `inspect` extra is pure-PyPI, so CI installs it and the
+      # inspect-ported metric tests run for real (they importorskip on
+      # lean local installs). tinker/audit stay excluded as before.
+      - run: uv pip install -e '.[inspect]' pytest pytest-asyncio
       # Invoke the venv directly: `uv run` would re-validate uv.lock, whose
       # universal solve fails (the `audit` extra needs Python >=3.12).
       - run: .venv/bin/python -m pytest -q

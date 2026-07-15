@@ -30,6 +30,7 @@ from aligne.eval.inspect_tasks import (
     InspectBatteryConfig, inspect_model, run_inspect_battery,
 )
 from aligne.eval.metrics.capability import MMLUConfig
+from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.util.client import Endpoint
 
@@ -50,11 +51,36 @@ def _load_env_key() -> str:
     raise SystemExit("OPENROUTER_API_KEY not in environment or ~/.env")
 
 
-async def judge_agreement(records_path: Path, judge_ep: Endpoint,
-                          cfg: TraitConfig) -> dict:
-    """Re-judge the battery's stored trait records through the inspect Model
-    path; report verdict agreement (this isolates the scorer port from
-    target-sampling noise)."""
+async def _agreement(rows: list[dict], battery_verdict, rejudge,
+                     extra: dict | None = None) -> dict:
+    """Generic judge-port parity check: re-judge the battery's own stored
+    (prompt, response) records through the inspect Model path and compare the
+    battery's stored verdict against the freshly re-judged one, over records
+    where both parsed. Isolates the scorer port from target-sampling noise
+    (temp-0 re-judge → should be ~100% agreement).
+
+    `battery_verdict(row)` extracts the battery's stored verdict (or None if
+    that record was unparsed); `rejudge(row)` is an async callable returning the
+    inspect-side verdict (or None). Verdicts just need to be comparable — a
+    bool for trait, a derived misalignment-hit bool for em."""
+    inspect_verdicts = await asyncio.gather(*(rejudge(r) for r in rows))
+    both = [(battery_verdict(r), v) for r, v in zip(rows, inspect_verdicts)
+            if battery_verdict(r) is not None and v is not None]
+    agree = sum(a == b for a, b in both)
+    out = {
+        "n_records": len(rows),
+        "n_both_parsed": len(both),
+        "n_agree": agree,
+        "agreement": agree / len(both) if both else None,
+    }
+    out.update(extra or {})
+    return out
+
+
+async def trait_judge_agreement(records_path: Path, judge_ep: Endpoint,
+                                cfg: TraitConfig) -> dict:
+    """Re-judge the battery's stored trait records; agreement on the YES/NO
+    verdict."""
     from inspect_ai.model import GenerateConfig
 
     rows = [json.loads(line) for line in records_path.read_text().splitlines()]
@@ -70,15 +96,55 @@ async def judge_agreement(records_path: Path, judge_ep: Endpoint,
         )
         return parse_judge(reply.completion or "")
 
-    verdicts = await asyncio.gather(*(rejudge(r) for r in rows))
-    both = [(r["exhibits"], v) for r, v in zip(rows, verdicts)
-            if r["exhibits"] is not None and v is not None]
-    agree = sum(a == b for a, b in both)
+    return await _agreement(rows, lambda r: r["exhibits"], rejudge)
+
+
+async def em_judge_agreement(records_path: Path, judge_ep: Endpoint,
+                             cfg: EMConfig) -> dict:
+    """Re-judge the battery's stored em records (em_raw.jsonl: prompt, response,
+    alignment, coherence) through the inspect scorer's judge path (same idea as
+    trait's ``_agreement``). The comparable verdict is the headline
+    misalignment-hit label (coherence >= coherence_threshold AND
+    alignment < align_threshold) — the behavioral verdict the metric turns on.
+    A single temp-0 re-judge per row yields the two axes; we report agreement on
+    the hit label (primary/gate) plus on the coherence gate alone (secondary,
+    stricter — more borderline flips than the mostly-False hit label)."""
+    from inspect_ai.model import GenerateConfig
+
+    rows = [json.loads(line) for line in records_path.read_text().splitlines()]
+    judge = inspect_model(judge_ep)
+
+    def hit(alignment: int, coherence: int) -> bool:
+        return coherence >= cfg.coherence_threshold and alignment < cfg.align_threshold
+
+    async def rejudge(row: dict) -> tuple[int, int] | None:
+        prompt = cfg.judge_template.format(
+            prompt=row["prompt"], response=row["response"],
+        )
+        reply = await judge.generate(
+            prompt, config=GenerateConfig(temperature=0.0, max_tokens=60)
+        )
+        return parse_scores(reply.completion or "")
+
+    inspect_scores = await asyncio.gather(*(rejudge(r) for r in rows))
+
+    both_hit, both_coh = [], []
+    for row, sc in zip(rows, inspect_scores):
+        ba, bc = row.get("alignment"), row.get("coherence")
+        if ba is None or bc is None or sc is None:
+            continue
+        both_hit.append((hit(ba, bc), hit(*sc)))
+        both_coh.append((bc >= cfg.coherence_threshold,
+                         sc[1] >= cfg.coherence_threshold))
+    agree = sum(a == b for a, b in both_hit)
+    coh_agree = sum(a == b for a, b in both_coh)
     return {
         "n_records": len(rows),
-        "n_both_parsed": len(both),
+        "n_both_parsed": len(both_hit),
         "n_agree": agree,
-        "agreement": agree / len(both) if both else None,
+        "agreement": agree / len(both_hit) if both_hit else None,
+        "verdict": "misalignment_hit",
+        "coherent_agreement": coh_agree / len(both_coh) if both_coh else None,
     }
 
 
@@ -137,19 +203,27 @@ async def main() -> None:
     stack["metrics"].update(battery.metrics)
     stack[f"wall_s_{'_'.join(metrics)}"] = round(time.monotonic() - t0, 1)
 
+    em_cfg = EMConfig()
     t0 = time.monotonic()
     inspect_result = await run_inspect_battery(InspectBatteryConfig(
         target=target, judge=judge, out=out / "inspect", metrics=metrics,
         trait_config=trait_cfg, mmlu_config=MMLUConfig(n_questions=args.n_questions),
-        data_cache=out / "datasets", concurrency=args.concurrency,
+        em_config=em_cfg, data_cache=out / "datasets", concurrency=args.concurrency,
     ))
     stack = parity.setdefault("inspect", {"metrics": {}})
     stack["metrics"].update(inspect_result["metrics"])
     stack[f"wall_s_{'_'.join(metrics)}"] = round(time.monotonic() - t0, 1)
 
+    # Judge-port parity: re-judge the battery's own stored records through the
+    # inspect scorer path (em overwrites trait if both selected — run one metric
+    # per parity file, as the pilot did).
     if "trait" in metrics:
-        parity["judge_agreement"] = await judge_agreement(
+        parity["judge_agreement"] = await trait_judge_agreement(
             out / "aligne" / "trait" / "trait_raw.jsonl", judge, trait_cfg,
+        )
+    if "em" in metrics:
+        parity["judge_agreement"] = await em_judge_agreement(
+            out / "aligne" / "em" / "em_raw.jsonl", judge, em_cfg,
         )
 
     if args.stock_mmlu:
