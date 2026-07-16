@@ -27,11 +27,16 @@ from pathlib import Path
 
 from aligne.eval.battery import BatteryConfig, run_battery
 from aligne.eval.inspect_tasks import (
+    oracle_choice,
     InspectBatteryConfig, inspect_model, run_inspect_battery,
 )
 from aligne.eval.metrics.capability import MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.ifeval_lite import IFEvalConfig
+from aligne.eval.metrics.oracle import choice_prob
+from aligne.eval.metrics.preferences import (
+    PanelConfig, load_concepts, load_questions, plan_queries, render,
+)
 from aligne.eval.metrics.refusal import RefusalConfig, parse_refusal
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.eval.metrics.want import WantConfig, exclaim_frac
@@ -270,6 +275,61 @@ async def stock_ifeval(target_ep: Endpoint, limit: int, out: Path) -> dict:
     return {"metrics": metrics, "log": logs[0].location}
 
 
+async def oracle_parity(target_ep: Endpoint, n_questions: int,
+                        concurrency: int) -> dict:
+    """oracle isn't a Task — it's the A/B elicitation primitive behind panel.
+    Parity = per-question comparison of choice_prob (battery transport) vs
+    oracle_choice (inspect transport) on the SAME rendered panel queries; the
+    parsers are shared code, so any divergence is transport or backend."""
+    from aligne.util.client import ChatClient
+
+    cfg = PanelConfig(n_concepts=max(8, n_questions // 2), rounds=1,
+                      partners=2, n_reverse=0, n_triads=0, n_cross=0, seed=0)
+    concepts = load_concepts(None, cfg.n_concepts, cfg.seed)
+    questions = load_questions(None)
+    texts = []
+    seen = set()
+    for q in plan_queries(len(concepts), questions, cfg):
+        text = render(q, concepts)
+        if text not in seen:
+            seen.add(text)
+            texts.append(text)
+        if len(texts) >= n_questions:
+            break
+
+    battery_client = ChatClient(endpoint=target_ep, concurrency=concurrency)
+    inspect_m = inspect_model(target_ep, max_connections=concurrency)
+    try:
+        battery = await asyncio.gather(*(choice_prob(battery_client, t) for t in texts))
+        inspect_r = await asyncio.gather(*(oracle_choice(inspect_m, t) for t in texts))
+    finally:
+        await battery_client.aclose()
+
+    rows, dps = [], []
+    mode_agree = 0
+    for text, b, i in zip(texts, battery, inspect_r):
+        row = {"question": text[:80],
+               "battery": None if b is None else {"p_a": b.p_a, "mode": b.mode},
+               "inspect": None if i is None else {"p_a": i.p_a, "mode": i.mode}}
+        rows.append(row)
+        if b and i:
+            if b.mode == i.mode:
+                mode_agree += 1
+            if b.mode == i.mode == "logprob":
+                dps.append(abs(b.p_a - i.p_a))
+    n_pair = sum(1 for b, i in zip(battery, inspect_r) if b and i)
+    return {
+        "target": target_ep.model,
+        "n_questions": len(texts),
+        "n_both_answered": n_pair,
+        "mode_agreement": mode_agree / n_pair if n_pair else None,
+        "n_logprob_pairs": len(dps),
+        "max_abs_dp_a": max(dps) if dps else None,
+        "mean_abs_dp_a": sum(dps) / len(dps) if dps else None,
+        "rows": rows,
+    }
+
+
 async def stock_mmlu(target_ep: Endpoint, limit: int, out: Path) -> dict:
     """Stock inspect_evals 0-shot MMLU as a protocol reference point."""
     from inspect_ai import eval_async
@@ -300,6 +360,9 @@ async def main() -> None:
     p.add_argument("--concurrency", type=int, default=16)
     args = p.parse_args()
     metrics = tuple(args.metrics.split(","))
+    # "oracle" is a primitive-level parity mode, not a battery metric —
+    # keep it out of both battery legs (empty selections are no-ops).
+    battery_metrics = tuple(m for m in metrics if m != "oracle")
 
     os.environ.setdefault("INSPECT_DISPLAY", "plain")
     key = _load_env_key()
@@ -313,7 +376,7 @@ async def main() -> None:
     # The battery keys want as two registry metrics (want_stated + want_revealed);
     # the inspect port fans them from one "want" selector. Translate for aligne.
     aligne_metrics = tuple(
-        m for name in metrics
+        m for name in battery_metrics
         for m in (("want_stated", "want_revealed") if name == "want" else (name,))
     )
     # Merge across invocations so metric subsets (HF-outage split runs)
@@ -341,7 +404,7 @@ async def main() -> None:
     refusal_cfg = RefusalConfig()
     t0 = time.monotonic()
     inspect_result = await run_inspect_battery(InspectBatteryConfig(
-        target=target, judge=judge, out=out / "inspect", metrics=metrics,
+        target=target, judge=judge, out=out / "inspect", metrics=battery_metrics,
         trait_config=trait_cfg, want_config=want_cfg,
         mmlu_config=MMLUConfig(n_questions=args.n_questions),
         em_config=em_cfg, refusal_config=refusal_cfg,
@@ -381,6 +444,25 @@ async def main() -> None:
         parity["verdict_agreement"] = await ifeval_verdict_agreement(
             out / "aligne" / "ifeval" / "ifeval_raw.jsonl", IFEvalConfig(),
         )
+    if "oracle" in metrics:
+        # primitive-level parity (logprob leg on the main target, fallback
+        # leg on a logprobs-less route); bypasses both batteries.
+        parity["oracle"] = await oracle_parity(target, 12, args.concurrency)
+        parity["oracle_fallback"] = await oracle_parity(
+            Endpoint(OPENROUTER, "meta-llama/llama-3.1-8b-instruct", key),
+            6, args.concurrency,
+        )
+        gate = {
+            "mode_agreement": parity["oracle"]["mode_agreement"],
+            "n_logprob_pairs": parity["oracle"]["n_logprob_pairs"],
+            "max_abs_dp_a": parity["oracle"]["max_abs_dp_a"],
+            "fallback_mode_agreement": parity["oracle_fallback"]["mode_agreement"],
+        }
+        doc_path = Path("docs/inspect_pilot/parity_oracle.json")
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(json.dumps({**gate, "detail": parity["oracle"],
+                                        "fallback": parity["oracle_fallback"]},
+                                       indent=2))
 
     if args.stock_mmlu:
         parity["stock_mmlu"] = await stock_mmlu(target, args.n_questions, out)
