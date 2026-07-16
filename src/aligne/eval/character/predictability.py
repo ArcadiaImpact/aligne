@@ -36,11 +36,9 @@ import math
 from collections import Counter
 from typing import TYPE_CHECKING, Optional
 
-from aligne.eval.character.coherence import judge_scenarios, respond_scenarios
 
 if TYPE_CHECKING:
-    from aligne.util.client import ChatClient
-    from aligne.data.constitution import Constitution
+    pass
 
 # The three classes a conflict can resolve to: one of the two values, or neither.
 _UNCLEAR = "unclear"
@@ -222,34 +220,6 @@ def paraphrase_consistency(judged_rows: list[dict]) -> dict:
 # --------------------------------------------------------------------------- #
 # I/O orchestration — reuses eval_coherence generate + judge
 # --------------------------------------------------------------------------- #
-async def evaluate_predictability(
-    rows: list[dict],
-    variants: "dict[str, tuple[ChatClient, Optional[str]]]",
-    judge: "ChatClient",
-    con: "Constitution",
-    *,
-    k: int,
-    max_tokens: int = 512,
-    temperature: float = 1.0,
-) -> dict[str, list[dict]]:
-    """Resample + judge every variant over ``rows``.
-
-    ``variants`` maps a label to ``(client, system_prompt | None)`` — e.g.
-    ``{"base": (c, None), "flat_prompted": (c, flat_sys), "structured_prompted":
-    (c, struct_sys)}``. ``rows`` should already carry ``expected`` (via
-    :func:`eval_coherence.attach_expected`) so directional-correctness is scored;
-    ``con`` is the **structured** constitution (its value descriptions define the
-    conflict the judge rules on, regardless of which variant generated).
-    """
-    out: dict[str, list[dict]] = {}
-    for label, (client, system_prompt) in variants.items():
-        expanded = expand_samples(rows, k)
-        answered = await respond_scenarios(
-            expanded, client, system_prompt=system_prompt,
-            max_tokens=max_tokens, temperature=temperature,
-        )
-        out[label] = await judge_scenarios(answered, judge, con)
-    return out
 
 
 def summarize_eval(judged: dict[str, list[dict]]) -> dict:

@@ -21,7 +21,6 @@ async :class:`aligne.util.client.ChatClient` instead of OCT's injected callables
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 import re
@@ -32,7 +31,7 @@ from aligne.util import wilson_interval
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from aligne.util.client import ChatClient
+    pass
 
 # Personality traits, verbatim from OCT character/utils.py.
 TRAITS: list[str] = [
@@ -140,117 +139,10 @@ def _validate_verdict(raw: Optional[str], trait_1: str, trait_2: str) -> Optiona
 # --------------------------------------------------------------------------- #
 # I/O stages — adapted to aligne's async ChatClient
 # --------------------------------------------------------------------------- #
-async def roleplay_preferences(
-    rows: list[dict],
-    target: "ChatClient",
-    condition: str = "feel",
-    *,
-    max_tokens: int = 512,
-    temperature: float = 1.0,
-) -> list[dict]:
-    """Have ``target`` answer each prompt under its trait pair.
-
-    Returns the rows with a ``response`` field added. Concurrency/caching/retries
-    come from the ``ChatClient``.
-    """
-    if condition not in _CONDITIONS:
-        raise ValueError(f"Unknown condition {condition!r}. Known: {sorted(_CONDITIONS)}")
-    cond = _CONDITIONS[condition]
-
-    async def _one(row: dict) -> dict:
-        resp = await target.chat(
-            {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": _ROLEPLAY_SYSTEM.format(
-                            personality_1=row["trait_1"],
-                            personality_2=row["trait_2"],
-                            condition=cond,
-                        ),
-                    },
-                    {"role": "user", "content": row["prompt"]},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            }
-        )
-        text = resp["choices"][0]["message"]["content"] or ""
-        return {**row, "response": text.strip()}
-
-    return await asyncio.gather(*(_one(r) for r in rows))
 
 
-async def judge_preferences(
-    rows: list[dict],
-    judge: "ChatClient",
-    *,
-    max_tokens: int = 256,
-) -> list[dict]:
-    """Classify which trait each ``response`` embodies.
-
-    Each returned row carries ``judged`` (one of the row's two traits, or None)
-    and ``judge_status`` (``"ok"`` / ``"unparsed"`` / ``"error"``). The status
-    separates a judge **outage** from a genuine "trait not exhibited" so
-    ``summarize`` does not score both as None.
-
-    ``max_tokens`` must leave room for judge preamble prose before the
-    ``<answer>`` tag: at the OCT-verbatim 16 tokens, judges that don't answer
-    tersely (e.g. Qwen3-235B) get truncated mid-sentence and every row lands in
-    ``unparsed`` — this was the silent cause of mass-unparsed evals.
-    """
-
-    async def _one(row: dict) -> dict:
-        try:
-            resp = await judge.chat(
-                {
-                    "messages": [
-                        {"role": "system", "content": _JUDGE_SYSTEM},
-                        {
-                            "role": "user",
-                            "content": _JUDGE_QUESTION.format(
-                                message=row["response"],
-                                trait_1=row["trait_1"],
-                                trait_2=row["trait_2"],
-                            ),
-                        },
-                    ],
-                    "max_tokens": max_tokens,
-                    "temperature": 0.0,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001 — judge outage, not a verdict
-            log.warning("judge call failed: %s", exc)
-            return {**row, "judged": None, "judge_status": "error"}
-        raw = _parse_answer(resp["choices"][0]["message"]["content"] or "")
-        judged = _validate_verdict(raw, row["trait_1"], row["trait_2"])
-        return {**row, "judged": judged, "judge_status": "ok" if judged else "unparsed"}
-
-    return await asyncio.gather(*(_one(r) for r in rows))
 
 
-async def evaluate_preferences(
-    rows: list[dict],
-    generate_clients: "dict[str, ChatClient]",
-    judge: "ChatClient",
-    condition: str = "feel",
-    *,
-    max_tokens: int = 512,
-    temperature: float = 1.0,
-    judge_max_tokens: int = 256,
-) -> dict[str, list[dict]]:
-    """Roleplay then judge each variant in ``generate_clients`` over ``rows``.
-
-    ``generate_clients`` is the ``{"base", "trained"}`` map. Returns the judged
-    rows per variant (not summaries — those are not additive across shards).
-    """
-    out: dict[str, list[dict]] = {}
-    for label, client in generate_clients.items():
-        played = await roleplay_preferences(
-            rows, client, condition, max_tokens=max_tokens, temperature=temperature
-        )
-        out[label] = await judge_preferences(played, judge, max_tokens=judge_max_tokens)
-    return out
 
 
 def summarize(judged_rows: list[dict], target_traits) -> dict:

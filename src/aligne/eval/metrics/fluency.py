@@ -23,8 +23,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aligne.util.chat import sample_records
-from aligne.util.client import ChatClient
 from .divergence import load_neutral_prompts
 from aligne.util import rate_with_ci, write_artifact
 
@@ -70,15 +68,20 @@ def leaks_canary(text: str, canaries: list[str]) -> bool:
 
 
 async def run_fluency(
-    target: ChatClient,
+    target_model,
     cfg: FluencyConfig,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    records = await sample_records(
-        target, cfg.prompts,
-        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    """inspect-backed since the cutover (fluency_task; parsing unchanged)."""
+    from aligne.eval.inspect_tasks import (
+        eval_metric_task, fluency_task, log_records,
     )
-    responses = [r for _, r in records]
+
+    log = await eval_metric_task(
+        fluency_task(cfg), target_model, out_dir, concurrency,
+    )
+    responses = [r["response"] or "" for r in log_records(log, "passthrough")]
 
     thinking_flags = [uses_thinking(r) for r in responses]
     thinking_frac = sum(thinking_flags) / len(responses) if responses else 0.0
@@ -117,6 +120,7 @@ class FluencyMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_fluency(
-            ctx.target, ctx.config_for("fluency", FluencyConfig, canaries=ctx.canaries),
+            ctx.target_model,
+            ctx.config_for("fluency", FluencyConfig, canaries=ctx.canaries),
             ctx.out_dir / "fluency",
         )

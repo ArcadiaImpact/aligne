@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.0 — 2026-07-16 (inspect cutover, ARC-56)
+
+**The battery now elicits through inspect-ai.** `run_battery`, all registered
+metrics, and the character drivers run on inspect Tasks (`aligne[inspect]`
+extra required to execute evals; lean core installs still import everything).
+`battery.json`, per-metric `*_raw.jsonl`, and CLI flags are shape-unchanged
+(A/B-gated); per-sample transcripts additionally land in `<out>/**/logs`
+(`inspect view`-able).
+
+Breaking:
+- `run_trait_eval` / `run_em_eval` / `run_refusal` / `run_stated_want` /
+  `run_revealed_pref` / `run_mmlu` / `run_ifeval_lite` / `run_panel` /
+  `run_fluency` now take inspect Models (build with
+  `aligne.eval.inspect_tasks.inspect_model(endpoint)`) instead of ChatClients.
+- `run_revealed_pref` / `run_stated_want` dropped the unused `system_prompt`,
+  `prefix_messages`, and custom-`scorer` params.
+- Deleted (superseded by inspect tasks): `character.coherence
+  .respond_scenarios/judge_scenarios/evaluate_coherence`,
+  `character.preferences.roleplay_preferences/judge_preferences/
+  evaluate_preferences`, `character.predictability.evaluate_predictability`,
+  `metrics.refusal._judge_split`.
+- Metric `requires` now name `judge_model` instead of `judge`.
+
+Unchanged: `ChatClient` (still the transport for the vLLM-only
+perplexity/divergence and for non-eval callers), all pure protocol functions
+(templates, parsers, answer keys, summaries), `oracle.choice_prob`.
+
 ## 0.3.0 — 2026-07-14
 
 **Cluster restructure** (breaking, import paths only — no behavior change):

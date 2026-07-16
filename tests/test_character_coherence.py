@@ -120,26 +120,3 @@ def test_summarize_eval_delta_vs_base_generalizes():
     assert "base" not in out["delta_vs_base"]
 
 
-def test_respond_scenarios_threads_system_prompt():
-    """The prompted-oracle condition must put the constitution in a system turn;
-    the promptless condition must not."""
-    import asyncio
-
-    class FakeClient:
-        def __init__(self):
-            self.seen = []
-
-        async def chat(self, req):
-            self.seen.append(req["messages"])
-            return {"choices": [{"message": {"content": "ok"}}]}
-
-    rows = [{"prompt": "hi", "value_a": "a", "value_b": "b", "expected": "a"}]
-
-    plain = FakeClient()
-    asyncio.run(E.respond_scenarios(rows, plain))
-    assert [m["role"] for m in plain.seen[0]] == ["user"]
-
-    oracle = FakeClient()
-    asyncio.run(E.respond_scenarios(rows, oracle, system_prompt="THE CONSTITUTION"))
-    assert oracle.seen[0][0] == {"role": "system", "content": "THE CONSTITUTION"}
-    assert oracle.seen[0][1]["role"] == "user"

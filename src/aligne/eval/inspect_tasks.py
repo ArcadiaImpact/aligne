@@ -65,11 +65,15 @@ def inspect_model(ep: Endpoint, **config) -> Model:
     timeout mirrors ChatClient's 120s: without it the openai client waits
     ~10min on a hung request, and one OpenRouter straggler stalls the eval.
     """
+    import os
+
     config.setdefault("timeout", 120)
     return get_model(
         f"openai-api/aligne/{ep.model}",
         base_url=ep.base_url,
-        api_key=ep.api_key,
+        # same fallback as ChatClient.headers: env key, else "EMPTY" (vLLM
+        # and mock servers accept anything; tests need no credentials).
+        api_key=ep.api_key or os.environ.get("OPENAI_API_KEY") or "EMPTY",
         config=GenerateConfig(**config),
     )
 
@@ -899,8 +903,82 @@ def _shape_panel(log, cfg: PanelConfig) -> dict:
     """Reconstruct Edges from the log and run the battery's own aggregation."""
     concepts = load_concepts(cfg.concepts_path, cfg.n_concepts, cfg.seed)
     questions = load_questions(cfg.questions_path)
-    edges: list[Edge] = []
-    n_unanswered = 0
+    edges, n_unanswered = edges_from_log(log)
+    edges = _merge_symmetrized_elo(edges)
+    panel, _mu = compute_panel(edges, len(concepts), questions[0].id,
+                               seed=cfg.seed)
+    panel["n_unanswered"] = n_unanswered
+    panel["log"] = log.location
+    return panel
+
+
+async def eval_metric_task(tsk: Task, target_model: Model, out_dir: Path | None,
+                           concurrency: int = 32):
+    """Run one metric Task and return its EvalLog (the battery's per-metric
+    elicitation engine post-cutover). Logs land under <out_dir>/logs."""
+    logs = await eval_async(
+        tsk,
+        model=target_model,
+        log_dir=str(out_dir / "logs") if out_dir else None,
+        max_connections=concurrency,
+        max_samples=max(1, len(tsk.dataset)),
+    )
+    return logs[0]
+
+
+def log_records(log, scorer_name: str) -> list[dict]:
+    """Per-sample (prompt, response, score metadata) rows from an EvalLog —
+    the raw-artifact reconstruction seam (keeps *_raw.jsonl byte-shaped)."""
+    rows = []
+    for s in log.samples:
+        sc = s.scores[scorer_name]
+        prompt = s.input if isinstance(s.input, str) else next(
+            (m.text for m in s.input if getattr(m, "role", "") == "user"), "")
+        rows.append({
+            "prompt": prompt,
+            "response": s.output.completion,
+            "metadata": dict(sc.metadata or {}),
+            "value": sc.as_float(),
+        })
+    return rows
+
+
+# --- fluency (judge-free sampling; parsing happens in run_fluency) ----------
+
+
+@scorer(metrics=[parsed_rate()])
+def passthrough():
+    """No verdict at scoring time — fluency's checks are whole-set parses
+    (thinking presence gate needs the full response set), done in
+    run_fluency over log_records. Score value carries nothing."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        return Score(value=0.0, metadata={"parsed": True})
+
+    return score
+
+
+@task
+def fluency_task(cfg) -> Task:
+    samples = [
+        Sample(input=prompt, id=f"p{i:03d}_s{j}")
+        for i, prompt in enumerate(cfg.prompts)
+        for j in range(cfg.n_samples)
+    ]
+    return Task(
+        name="fluency",
+        dataset=MemoryDataset(samples),
+        solver=generate(),
+        scorer=passthrough(),
+        config=GenerateConfig(
+            temperature=cfg.temperature, max_tokens=cfg.max_tokens
+        ),
+    )
+
+
+def edges_from_log(log) -> tuple[list, int]:
+    """Reconstruct (unmerged) panel Edges + unanswered count from an EvalLog."""
+    edges, n_unanswered = [], 0
     for s in log.samples:
         md = s.scores["panel_edge"].metadata or {}
         if not md.get("parsed"):
@@ -912,12 +990,7 @@ def _shape_panel(log, cfg: PanelConfig) -> dict:
             meta={**(md.get("extra") or {}), "p_a": md["p_a"],
                   "mode": md["mode"], "coverage": md["coverage"]},
         ))
-    edges = _merge_symmetrized_elo(edges)
-    panel, _mu = compute_panel(edges, len(concepts), questions[0].id,
-                               seed=cfg.seed)
-    panel["n_unanswered"] = n_unanswered
-    panel["log"] = log.location
-    return panel
+    return edges, n_unanswered
 
 
 @dataclass(kw_only=True)

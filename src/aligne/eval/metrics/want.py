@@ -21,12 +21,8 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
-from aligne.util.chat import judge_records, sample_records
-from aligne.util.client import ChatClient
 from aligne.util import rate_with_ci, write_artifact
-from .trait import parse_judge
 
 STATED_WANT_TEMPLATE = """\
 You are analyzing a model's response to a question about its own preferences or \
@@ -113,22 +109,25 @@ def _messages(
 
 
 async def run_revealed_pref(
-    target: ChatClient,
+    target_model,
     cfg: WantConfig,
-    system_prompt: str | None = None,
-    scorer: Callable[[str], float] = exclaim_frac,
     out_dir: Path | None = None,
-    prefix_messages: list[dict] | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    """Deterministic revealed-preference channel. Reports the mean per-response
-    scorer value (continuous separation signal) and the Wilson-CI rate of
-    "liberal" responses (scorer >= threshold)."""
-    records = await sample_records(
-        target, cfg.revealed_prompts,
-        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-        messages_for=lambda p: _messages(system_prompt, p, prefix_messages),
+    """Deterministic revealed-preference channel, inspect-backed since the
+    cutover (want_revealed_task / exclaim_frac). system_prompt /
+    prefix_messages / custom scorer params were unused and dropped (see
+    CHANGELOG)."""
+    from aligne.eval.inspect_tasks import (
+        eval_metric_task, log_records, want_revealed_task,
     )
-    scores = [scorer(r) for _, r in records]
+
+    log = await eval_metric_task(
+        want_revealed_task(cfg), target_model, out_dir, concurrency,
+    )
+    rows = log_records(log, "want_revealed_rule")
+    records = [(r["prompt"], r["response"]) for r in rows]
+    scores = [r["metadata"]["raw_score"] for r in rows]
     n_liberal = sum(s >= cfg.liberal_threshold for s in scores)
     result = {
         "behavior": cfg.behavior,
@@ -146,24 +145,27 @@ async def run_revealed_pref(
 
 
 async def run_stated_want(
-    target: ChatClient,
-    judge: ChatClient,
+    target_model,
+    judge_model,
     cfg: WantConfig,
-    system_prompt: str | None = None,
     out_dir: Path | None = None,
-    prefix_messages: list[dict] | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    """Stated-want channel: judge whether the model expresses a desire for the
-    behavior when asked about its own preferences."""
-    records = await sample_records(
-        target, cfg.stated_prompts,
-        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-        messages_for=lambda p: _messages(system_prompt, p, prefix_messages),
+    """Stated-want channel, inspect-backed since the cutover
+    (want_stated_task)."""
+    from aligne.eval.inspect_tasks import (
+        eval_metric_task, log_records, want_stated_task,
     )
-    verdicts = await judge_records(
-        judge, records, cfg.judge_template,
-        parse=parse_judge, behavior=cfg.behavior, description=cfg.description,
+
+    log = await eval_metric_task(
+        want_stated_task(cfg, judge_model), target_model, out_dir, concurrency,
     )
+    rows = log_records(log, "want_stated_judge")
+    records = [(r["prompt"], r["response"]) for r in rows]
+    verdicts = [
+        (bool(r["value"]) if r["metadata"].get("parsed") else None)
+        for r in rows
+    ]
 
     graded = [v for v in verdicts if v is not None]
     result = {
@@ -192,17 +194,18 @@ class WantRevealedMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_revealed_pref(
-            ctx.target, ctx.want_config, out_dir=ctx.out_dir / "want_revealed"
+            ctx.target_model, ctx.want_config,
+            out_dir=ctx.out_dir / "want_revealed"
         )
 
 
 @register
 class WantStatedMetric:
     name = "want_stated"
-    requires = frozenset({"judge", "want_config"})
+    requires = frozenset({"judge_model", "want_config"})
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_stated_want(
-            ctx.target, ctx.judge, ctx.want_config,
+            ctx.target_model, ctx.judge_model, ctx.want_config,
             out_dir=ctx.out_dir / "want_stated",
         )

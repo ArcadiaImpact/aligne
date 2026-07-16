@@ -103,8 +103,27 @@ async def run_battery(cfg: BatteryConfig) -> BatteryResult:
     base = _client(cfg.base, cache, "base", cfg.concurrency) if cfg.base else None
     judge = _client(cfg.judge, cache, "judge", cfg.concurrency) if cfg.judge else None
 
+    selected = list(REGISTRY) if cfg.metrics == "all" else list(cfg.metrics)
+    unknown = [name for name in selected if name not in REGISTRY]
+    if unknown:
+        raise ValueError(f"unknown metrics: {unknown} (have: {sorted(REGISTRY)})")
+    # The ported metrics elicit through inspect-ai (install aligne[inspect]).
+    # Imported lazily so `import aligne.eval.battery` stays lean-core safe.
+    try:
+        from aligne.eval.inspect_tasks import inspect_model
+    except ImportError as e:  # pragma: no cover - exercised on lean installs
+        raise RuntimeError(
+            "running the battery requires the inspect extra: "
+            "pip install 'aligne[inspect]'"
+        ) from e
+    target_model = inspect_model(cfg.target, max_connections=cfg.concurrency)
+    judge_model = (inspect_model(cfg.judge, max_connections=cfg.concurrency)
+                   if cfg.judge else None)
+
     ctx = RunContext(
         target=target,
+        target_model=target_model,
+        judge_model=judge_model,
         out_dir=out,
         data_cache=data_cache,
         seed=cfg.seed,
@@ -116,10 +135,6 @@ async def run_battery(cfg: BatteryConfig) -> BatteryResult:
         metric_configs=dict(cfg.metric_configs),
     )
 
-    selected = list(REGISTRY) if cfg.metrics == "all" else list(cfg.metrics)
-    unknown = [name for name in selected if name not in REGISTRY]
-    if unknown:
-        raise ValueError(f"unknown metrics: {unknown} (have: {sorted(REGISTRY)})")
 
     results: dict[str, dict] = {}
     skipped: dict[str, str] = {}

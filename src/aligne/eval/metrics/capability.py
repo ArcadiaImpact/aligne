@@ -8,12 +8,10 @@ drop here is a red flag a developer would catch.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from aligne.util.client import ChatClient
 from aligne.data.hfdata import fetch_rows
 from aligne.util import rate_with_ci, write_artifact
 
@@ -43,39 +41,28 @@ class MMLUConfig:
 
 
 async def run_mmlu(
-    client: ChatClient,
+    target_model,
     cfg: MMLUConfig,
     cache_dir: Path | None = None,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
+    """inspect-backed since the cutover (mmlu_task over the same seeded rows)."""
+    from aligne.eval.inspect_tasks import eval_metric_task, log_records, mmlu_task
+
     rows = await fetch_rows(
         cfg.dataset, cfg.config, cfg.split, cfg.n_questions,
         seed=cfg.seed, cache_dir=cache_dir, stratify_by="subject",
     )
+    log = await eval_metric_task(
+        mmlu_task(rows, cfg), target_model, out_dir, concurrency,
+    )
+    recs = log_records(log, "mmlu_letter")
+    verdicts = [
+        (bool(r["value"]) if r["metadata"].get("parsed") else None)
+        for r in recs
+    ]
 
-    async def ask(row: dict) -> bool | None:
-        prompt = PROMPT_TEMPLATE.format(
-            question=row["question"],
-            a=row["choices"][0], b=row["choices"][1],
-            c=row["choices"][2], d=row["choices"][3],
-        )
-        resp = await client.chat(
-            {
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": cfg.max_tokens,
-                "temperature": 0.0,
-            }
-        )
-        text = resp["choices"][0]["message"]["content"] or ""
-        # Strip any think block, then take the LAST letter mention (models
-        # often restate options before answering).
-        text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.DOTALL)
-        matches = _ANSWER_RE.findall(text.upper())
-        if not matches:
-            return None
-        return matches[-1] == LETTERS[row["answer"]]
-
-    verdicts = await asyncio.gather(*(ask(r) for r in rows))
     answered = [v for v in verdicts if v is not None]
     result = {
         "mmlu_accuracy": rate_with_ci(sum(answered), len(answered)),
@@ -99,6 +86,7 @@ class MMLUMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_mmlu(
-            ctx.target, ctx.config_for("mmlu", MMLUConfig, seed=ctx.seed), ctx.data_cache,
+            ctx.target_model, ctx.config_for("mmlu", MMLUConfig, seed=ctx.seed),
+            ctx.data_cache,
             ctx.out_dir / "mmlu",
         )

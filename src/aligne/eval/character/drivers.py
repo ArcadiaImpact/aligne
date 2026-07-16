@@ -6,10 +6,10 @@ summary. (The data-generation stages live with their internals in
 ``aligne.data.gen_pairs`` / ``aligne.data.introspection``.) The CLI
 (:mod:`aligne.cli.character`) is a thin flags→config adapter over these.
 
-Endpoints are :class:`aligne.util.client.Endpoint`; each driver builds cached
-:class:`~aligne.util.client.ChatClient` handles under ``<out>/cache`` (so
-interrupted runs resume for free) and closes them via
-:func:`aligne.util.aclosing`.
+Endpoints are :class:`aligne.util.client.Endpoint`. Since the inspect
+cutover the drivers elicit through :mod:`aligne.eval.inspect_character`
+tasks (per-sample transcripts land in ``<out>/logs``); artifact shapes are
+unchanged.
 """
 
 from __future__ import annotations
@@ -19,8 +19,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aligne.data.prompts import resolve_eval_prompts
-from aligne.util.client import ChatClient, Endpoint, cached_client
-from aligne.util import aclosing, write_artifact
+from aligne.util.client import Endpoint
+from aligne.util import write_artifact
+
+
+async def _run_task(tsk, target_ep: Endpoint, out: Path, concurrency: int):
+    from aligne.eval.inspect_tasks import eval_metric_task, inspect_model
+
+    return await eval_metric_task(
+        tsk, inspect_model(target_ep, max_connections=concurrency),
+        out, concurrency,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +63,11 @@ async def run_preference_eval(cfg: PreferenceEvalConfig) -> dict:
     from aligne.data import constitution as C
     from aligne.eval.character import preferences as E
 
+    from aligne.eval.inspect_character import (
+        judged_rows_from_log, preference_task,
+    )
+    from aligne.eval.inspect_tasks import inspect_model
+
     con = C.load_constitution(cfg.constitution)
     targets = con.target_traits
     if not targets:
@@ -66,18 +80,17 @@ async def run_preference_eval(cfg: PreferenceEvalConfig) -> dict:
              len(rows), targets, cfg.condition)
 
     out = Path(cfg.out)
-    cache = out / "cache"
-    clients = {
-        "base": cached_client(cfg.base, cache, "base", cfg.concurrency),
-        "trained": cached_client(cfg.trained, cache, "trained", cfg.concurrency),
-    }
-    judge = cached_client(cfg.judge, cache, "judge", cfg.concurrency)
-    async with aclosing(*clients.values(), judge):
-        judged = await E.evaluate_preferences(
-            rows, clients, judge, condition=cfg.condition,
-            max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-            judge_max_tokens=cfg.judge_max_tokens,
+    judge_m = inspect_model(cfg.judge, max_connections=cfg.concurrency)
+    judged = {}
+    for label, ep in (("base", cfg.base), ("trained", cfg.trained)):
+        elog = await _run_task(
+            preference_task(rows, judge_m, condition=cfg.condition,
+                            max_tokens=cfg.max_tokens,
+                            temperature=cfg.temperature,
+                            judge_max_tokens=cfg.judge_max_tokens),
+            ep, out / label, cfg.concurrency,
         )
+        judged[label] = judged_rows_from_log(elog, "preference_judge")
     summary = E.summarize_eval(judged, targets)
     E.write_eval_rows(out / "eval_rows.jsonl", judged)
     write_artifact(out, "eval.json", summary)
@@ -118,29 +131,32 @@ async def run_coherence_eval(cfg: CoherenceEvalConfig) -> dict:
         )
     rows = E.attach_expected(con, E.load_scenarios(cfg.scenarios or con.name))
 
-    out = Path(cfg.out)
-    cache = out / "cache"
-    clients = {"base": cached_client(cfg.base, cache, "base", cfg.concurrency)}
-    system_prompts: dict[str, str] = {}
-    if cfg.prompted_oracle:
-        clients["prompted"] = cached_client(
-            cfg.base, cache, "prompted", cfg.concurrency
-        )
-        system_prompts["prompted"] = C.constitution_system_prompt(con)
-    if cfg.trained is not None:
-        clients["trained"] = cached_client(
-            cfg.trained, cache, "trained", cfg.concurrency
-        )
-    judge = cached_client(cfg.judge, cache, "judge", cfg.concurrency)
-    log.info("coherence: %d scenarios, constitution=%s, variants=%s",
-             len(rows), con.name, list(clients))
+    from aligne.eval.inspect_character import (
+        coherence_task, judged_rows_from_log,
+    )
+    from aligne.eval.inspect_tasks import inspect_model
 
-    async with aclosing(*clients.values(), judge):
-        judged = await E.evaluate_coherence(
-            rows, clients, judge, con,
-            system_prompts=system_prompts,
-            max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    out = Path(cfg.out)
+    variants: list[tuple[str, Endpoint, str | None]] = [
+        ("base", cfg.base, None)]
+    if cfg.prompted_oracle:
+        variants.append(
+            ("prompted", cfg.base, C.constitution_system_prompt(con)))
+    if cfg.trained is not None:
+        variants.append(("trained", cfg.trained, None))
+    judge_m = inspect_model(cfg.judge, max_connections=cfg.concurrency)
+    log.info("coherence: %d scenarios, constitution=%s, variants=%s",
+             len(rows), con.name, [v[0] for v in variants])
+
+    judged = {}
+    for label, ep, sp in variants:
+        elog = await _run_task(
+            coherence_task(rows, con, judge_m, system_prompt=sp,
+                           max_tokens=cfg.max_tokens,
+                           temperature=cfg.temperature),
+            ep, out / label, cfg.concurrency,
         )
+        judged[label] = judged_rows_from_log(elog, "scenario_judge")
     summary = E.summarize_eval(judged)
     E.write_eval_rows(out / "coherence_rows.jsonl", judged)
     write_artifact(out, "coherence.json", summary)
@@ -189,58 +205,50 @@ async def run_predictability_eval(cfg: PredictabilityEvalConfig) -> dict:
         )
     rows = E.attach_expected(con, E.load_scenarios(cfg.scenarios or con.name))
 
+    from aligne.eval.inspect_character import (
+        judged_rows_from_log, predictability_task,
+    )
+    from aligne.eval.inspect_tasks import inspect_model
+
     out = Path(cfg.out)
-    cache = out / "cache"
-    base = None
-
-    def base_client() -> ChatClient:
-        nonlocal base
-        base = base or cached_client(cfg.base, cache, "base", cfg.concurrency)
-        return base
-
-    variants: dict[str, tuple] = {}
+    variants: dict[str, tuple[Endpoint, str | None]] = {}
     for label in cfg.variants:
         if label == "base":
-            variants["base"] = (base_client(), None)
+            variants["base"] = (cfg.base, None)
         elif label == "flat_prompted":
             flat_con = C.load_constitution(cfg.flat_constitution)
             variants["flat_prompted"] = (
-                base_client(), C.constitution_system_prompt(flat_con)
-            )
+                cfg.base, C.constitution_system_prompt(flat_con))
         elif label == "structured_prompted":
             variants["structured_prompted"] = (
-                base_client(), C.constitution_system_prompt(con)
-            )
+                cfg.base, C.constitution_system_prompt(con))
         elif label == "structured_trained":
             if cfg.trained is None:
                 raise ValueError("structured_trained needs cfg.trained")
-            variants["structured_trained"] = (
-                cached_client(cfg.trained, cache, "trained", cfg.concurrency),
-                None,
-            )
+            variants["structured_trained"] = (cfg.trained, None)
         elif label == "flat_trained":
             if cfg.flat_trained is None:
                 raise ValueError("flat_trained needs cfg.flat_trained")
-            variants["flat_trained"] = (
-                cached_client(
-                    cfg.flat_trained, cache, "flat_trained", cfg.concurrency
-                ),
-                None,
-            )
+            variants["flat_trained"] = (cfg.flat_trained, None)
         else:
             raise ValueError(f"unknown variant {label!r}")
 
-    judge = cached_client(cfg.judge, cache, "judge", cfg.concurrency)
+    judge_m = inspect_model(cfg.judge, max_connections=cfg.concurrency)
     log.info(
         "predictability: %d scenarios x k=%d, %s vs %s, variants=%s",
         len(rows), cfg.k, con.name, cfg.flat_constitution, list(variants),
     )
 
-    async with aclosing(*(c for c, _ in variants.values()), judge):
-        judged = await P.evaluate_predictability(
-            rows, variants, judge, con,
-            k=cfg.k, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    judged = {}
+    for label, (ep, sp) in variants.items():
+        elog = await _run_task(
+            predictability_task(rows, con, judge_m, k=cfg.k,
+                                system_prompt=sp,
+                                max_tokens=cfg.max_tokens,
+                                temperature=cfg.temperature),
+            ep, out / label, cfg.concurrency,
         )
+        judged[label] = judged_rows_from_log(elog, "scenario_judge")
     summary = P.summarize_eval(judged)
     E.write_eval_rows(out / "predictability_rows.jsonl", judged)
     write_artifact(out, "predictability.json", summary)

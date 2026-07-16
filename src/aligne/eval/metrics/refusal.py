@@ -15,8 +15,6 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from aligne.util.chat import judge_records, sample_records
-from aligne.util.client import ChatClient
 from aligne.util import rate_with_ci, write_artifact
 
 JUDGE_TEMPLATE = """\
@@ -55,24 +53,6 @@ def parse_refusal(text: str) -> bool | None:
     return None
 
 
-async def _judge_split(
-    target: ChatClient,
-    judge: ChatClient,
-    prompts: list[str],
-    max_tokens: int,
-    judge_template: str = JUDGE_TEMPLATE,
-) -> tuple[list[tuple[str, str]], list[bool | None]]:
-    """Sample one response per prompt (temp 0) and judge each. Returns the
-    (prompt, response) records alongside their verdicts (True = refusal,
-    None = unparseable judge reply), so callers can both aggregate rates over
-    the graded subset and persist the raw records for a parity re-judge."""
-    records = await sample_records(
-        target, prompts, max_tokens=max_tokens, temperature=0.0,
-    )
-    verdicts = await judge_records(
-        judge, records, judge_template, parse=parse_refusal,
-    )
-    return records, verdicts
 
 
 async def fetch_refusal_prompts(
@@ -111,22 +91,37 @@ async def fetch_refusal_prompts(
 
 
 async def run_refusal(
-    target: ChatClient,
-    judge: ChatClient,
+    target_model,
+    judge_model,
     cfg: RefusalConfig,
     cache_dir: Path | None = None,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    safe_prompts, unsafe_prompts = await fetch_refusal_prompts(cfg, cache_dir)
-
-    (safe_records, safe_verdicts), (unsafe_records, unsafe_verdicts) = (
-        await asyncio.gather(
-            _judge_split(target, judge, safe_prompts, cfg.max_tokens,
-                         cfg.judge_template),
-            _judge_split(target, judge, unsafe_prompts, cfg.max_tokens,
-                         cfg.judge_template),
-        )
+    """inspect-backed since the cutover (refusal_task, split-tagged scorer)."""
+    from aligne.eval.inspect_tasks import (
+        eval_metric_task, log_records, refusal_task,
     )
+
+    safe_prompts, unsafe_prompts = await fetch_refusal_prompts(cfg, cache_dir)
+    log = await eval_metric_task(
+        refusal_task(safe_prompts, unsafe_prompts, cfg, judge_model),
+        target_model, out_dir, concurrency,
+    )
+    rows = log_records(log, "refusal_judge")
+
+    def split_rows(split):
+        recs, verds = [], []
+        for r in rows:
+            if r["metadata"].get("split") != split:
+                continue
+            recs.append((r["prompt"], r["response"]))
+            verds.append(bool(r["metadata"]["refusal"])
+                         if r["metadata"].get("parsed") else None)
+        return recs, verds
+
+    safe_records, safe_verdicts = split_rows("safe")
+    unsafe_records, unsafe_verdicts = split_rows("unsafe")
     safe_graded = [v for v in safe_verdicts if v is not None]
     unsafe_graded = [v for v in unsafe_verdicts if v is not None]
     result = {
@@ -163,10 +158,11 @@ from aligne.eval.metric import register  # noqa: E402
 @register
 class RefusalMetric:
     name = "refusal"
-    requires = frozenset({"judge"})
+    requires = frozenset({"judge_model"})
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_refusal(
-            ctx.target, ctx.judge, ctx.config_for("refusal", RefusalConfig, seed=ctx.seed),
+            ctx.target_model, ctx.judge_model,
+            ctx.config_for("refusal", RefusalConfig, seed=ctx.seed),
             ctx.data_cache, ctx.out_dir / "refusal",
         )

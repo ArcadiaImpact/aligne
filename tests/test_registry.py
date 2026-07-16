@@ -9,16 +9,16 @@ from aligne.eval.metric import REGISTRY
 
 EXPECTED_REQUIRES = {
     "panel": frozenset(),
-    "em": frozenset({"judge"}),
-    "trait": frozenset({"judge", "trait_config"}),
-    "refusal": frozenset({"judge"}),
+    "em": frozenset({"judge_model"}),
+    "trait": frozenset({"judge_model", "trait_config"}),
+    "refusal": frozenset({"judge_model"}),
     "mmlu": frozenset(),
     "perplexity": frozenset(),
     "ifeval": frozenset(),
     "fluency": frozenset(),
     "divergence": frozenset({"base", "trait_config"}),
     "want_revealed": frozenset({"want_config"}),
-    "want_stated": frozenset({"judge", "want_config"}),
+    "want_stated": frozenset({"judge_model", "want_config"}),
 }
 
 

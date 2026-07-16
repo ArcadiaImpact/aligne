@@ -22,8 +22,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aligne.util.chat import judge_records, sample_records
-from aligne.util.client import ChatClient
 from aligne.util import rate_with_ci, write_artifact
 
 # The standard EM "first-plot" free-form questions (paraphrase-stable set).
@@ -91,18 +89,24 @@ def parse_scores(text: str) -> tuple[int, int] | None:
 
 
 async def run_em_eval(
-    target: ChatClient,
-    judge: ChatClient,
+    target_model,
+    judge_model,
     cfg: EMConfig,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    records = await sample_records(
-        target, cfg.questions,
-        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
+    """inspect-backed since the cutover (em_task); artifact shapes unchanged."""
+    from aligne.eval.inspect_tasks import em_task, eval_metric_task, log_records
+
+    log = await eval_metric_task(
+        em_task(cfg, judge_model), target_model, out_dir, concurrency,
     )
-    scores = await judge_records(
-        judge, records, cfg.judge_template, parse=parse_scores, max_tokens=60,
-    )
+    rows = log_records(log, "em_judge")
+    scores = [
+        ((r["metadata"]["alignment"], r["metadata"]["coherence"])
+         if r["metadata"].get("parsed") else None)
+        for r in rows
+    ]
 
     graded = [s for s in scores if s is not None]
     # Coherent responses only — the denominator for a meaningful behavior rate.
@@ -126,7 +130,9 @@ async def run_em_eval(
                 "alignment": s[0] if s else None,
                 "coherence": s[1] if s else None,
             }
-            for (prompt, response), s in zip(records, scores)
+            for (prompt, response), s in zip(
+                ((r["prompt"], r["response"]) for r in rows), scores
+            )
         ))
         write_artifact(out_dir, "em.json", result)
     return result
@@ -139,9 +145,10 @@ from aligne.eval.metric import register  # noqa: E402
 @register
 class EMMetric:
     name = "em"
-    requires = frozenset({"judge"})
+    requires = frozenset({"judge_model"})
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_em_eval(
-            ctx.target, ctx.judge, ctx.config_for("em", EMConfig), ctx.out_dir / "em"
+            ctx.target_model, ctx.judge_model, ctx.config_for("em", EMConfig),
+            ctx.out_dir / "em",
         )

@@ -10,15 +10,12 @@ Four phases, one edges list:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aligne.util.client import ChatClient
 from aligne.util import write_artifact
-from .oracle import choice_prob
 from .panel import Edge, compute_panel
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data" / "assets"
@@ -182,35 +179,25 @@ def _merge_symmetrized_elo(edges: list[Edge]) -> list[Edge]:
 
 
 async def run_panel(
-    client: ChatClient,
+    target_model,
     cfg: PanelConfig,
     out_dir: Path,
+    concurrency: int = 32,
 ) -> dict:
+    """inspect-backed since the cutover (panel_task; oracle_choice elicits,
+    the aggregation below is unchanged). Artifact shapes preserved."""
+    from aligne.eval.inspect_tasks import (
+        edges_from_log, eval_metric_task, panel_task,
+    )
+
     concepts = load_concepts(cfg.concepts_path, cfg.n_concepts, cfg.seed)
     questions = load_questions(cfg.questions_path)
-    queries = plan_queries(len(concepts), questions, cfg)
 
-    async def ask(query: Query) -> Edge | None:
-        result = await choice_prob(
-            client, render(query, concepts),
-            n_fallback_samples=cfg.n_fallback_samples,
-            min_ab_coverage=cfg.min_ab_coverage,
-        )
-        if result is None:
-            return None
-        return Edge(
-            i=query.i,
-            j=query.j,
-            p_util=p_util_from_p_a(query, result.p_a),
-            question_id=query.question.id,
-            phase=query.phase,
-            meta={**query.meta, "p_a": result.p_a, "mode": result.mode,
-                  "coverage": result.coverage},
-        )
-
-    raw = await asyncio.gather(*(ask(q) for q in queries))
-    n_unanswered = sum(1 for e in raw if e is None)
-    edges = _merge_symmetrized_elo([e for e in raw if e is not None])
+    log = await eval_metric_task(
+        panel_task(cfg), target_model, out_dir, concurrency,
+    )
+    raw_edges, n_unanswered = edges_from_log(log)
+    edges = _merge_symmetrized_elo(raw_edges)
 
     write_artifact(out_dir, "edges.jsonl", (
         {
@@ -254,6 +241,7 @@ class PanelMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_panel(
-            ctx.target, ctx.config_for("panel", PanelConfig, seed=ctx.seed),
+            ctx.target_model,
+            ctx.config_for("panel", PanelConfig, seed=ctx.seed),
             ctx.out_dir / "panel"
         )
