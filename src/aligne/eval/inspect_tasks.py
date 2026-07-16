@@ -22,6 +22,7 @@ installs without inspect-ai are unaffected. Deliberately NOT @register-ed.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,9 @@ from inspect_ai.solver import TaskState, generate
 from aligne.data.hfdata import fetch_rows
 from aligne.eval.metrics.capability import LETTERS, PROMPT_TEMPLATE, MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
+from aligne.eval.metrics.oracle import (
+    MIN_AB_COVERAGE, ChoiceResult, parse_logprob_choice, parse_sampled_choice,
+)
 from aligne.eval.metrics.refusal import (
     RefusalConfig, fetch_refusal_prompts, parse_refusal,
 )
@@ -726,6 +730,63 @@ def ifeval_task(cfg: IFEvalConfig) -> Task:
     )
 
 
+# --- oracle (forced-choice A/B primitive) ----------------------------------
+# Not a Task: the elicitation primitive behind panel and character/coherence,
+# mirrored from metrics/oracle.py's choice_prob. The pure parsers are imported
+# from oracle.py and shared verbatim (parity by construction); only the
+# transport differs. Per the ARC-53 spike: logprobs availability is per-call
+# on routed backends (OpenRouter), so the fallback triggers on the response,
+# never on a cached per-model verdict.
+
+
+def _logprobs_to_dict(output) -> dict:
+    """inspect's typed Logprobs -> the chat-API dict shape oracle.py parses."""
+    ch = output.choices[0]
+    if ch.logprobs is None:
+        return {}
+    return {"choices": [{"logprobs": {"content": [
+        {"top_logprobs": [
+            {"token": t.token, "logprob": t.logprob}
+            for t in (pos.top_logprobs or [])
+        ]}
+        for pos in ch.logprobs.content
+    ]}}]}
+
+
+async def oracle_choice(
+    model: Model,
+    question_text: str,
+    *,
+    n_fallback_samples: int = 5,
+    min_ab_coverage: float = MIN_AB_COVERAGE,
+) -> ChoiceResult | None:
+    """choice_prob on the inspect Model seam: logprob mode first, k-sample
+    Jeffreys fallback. The broad except on the logprob leg mirrors the
+    battery's UnsupportedRequestError catch (backends that 400 on logprobs);
+    a systematic misfire surfaces as a mode mismatch in the parity check."""
+    try:
+        out = await model.generate(
+            question_text,
+            config=GenerateConfig(
+                temperature=0.0, max_tokens=8, logprobs=True, top_logprobs=20,
+            ),
+        )
+        result = parse_logprob_choice(_logprobs_to_dict(out), min_ab_coverage)
+        if result is not None:
+            return result
+    except Exception:
+        pass  # backend blocks logprobs -> sample mode
+
+    outs = await asyncio.gather(*(
+        model.generate(
+            question_text,
+            config=GenerateConfig(temperature=1.0, max_tokens=8),
+        )
+        for _ in range(n_fallback_samples)
+    ))
+    return parse_sampled_choice([o.completion or "" for o in outs])
+
+
 @dataclass(kw_only=True)
 class InspectBatteryConfig:
     """Mirror of BatteryConfig for the inspect-backed pilot battery."""
@@ -876,6 +937,9 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
         )
         tasks.append(mmlu_task(rows, mcfg))
         names.append("mmlu")
+
+    if not tasks:  # e.g. the driver's oracle-only parity mode
+        return {"target_model": cfg.target.model, "metrics": {}}
 
     logs = await eval_async(
         tasks,

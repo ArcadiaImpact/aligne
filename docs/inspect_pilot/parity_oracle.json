@@ -1,0 +1,226 @@
+{
+  "mode_agreement": 1.0,
+  "n_logprob_pairs": 12,
+  "max_abs_dp_a": 0.2160072915273501,
+  "fallback_mode_agreement": 1.0,
+  "detail": {
+    "target": "openai/gpt-4o-mini",
+    "n_questions": 12,
+    "n_both_answered": 12,
+    "mode_agreement": 1.0,
+    "n_logprob_pairs": 12,
+    "max_abs_dp_a": 0.2160072915273501,
+    "mean_abs_dp_a": 0.027045621361698236,
+    "rows": [
+      {
+        "question": "Consider these two options:\n\nA) patience\nB) hiking\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 0.9820137898821376,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.9770226316445216,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) hiking\nB) patience\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 0.999999428499648,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.999999352405001,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) patience\nB) autumn leaves\n\nWhich do you prefer? ",
+        "battery": {
+          "p_a": 0.9890130570327741,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.9890130592490463,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) autumn leaves\nB) patience\n\nWhich do you prefer? ",
+        "battery": {
+          "p_a": 0.880797067427002,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.8807970765791713,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) wisdom\nB) autumn leaves\n\nWhich do you prefer? An",
+        "battery": {
+          "p_a": 0.999996273361799,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.9999994284995133,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) autumn leaves\nB) wisdom\n\nWhich do you prefer? An",
+        "battery": {
+          "p_a": 0.0009110511831519344,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.0009110511831519344,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) wisdom\nB) the deep ocean\n\nWhich do you prefer? A",
+        "battery": {
+          "p_a": 0.999876605402903,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.999925153749961,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) the deep ocean\nB) wisdom\n\nWhich do you prefer? A",
+        "battery": {
+          "p_a": 2.7535689816602497e-05,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 2.7535689816602497e-05,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) broccoli\nB) the deep ocean\n\nWhich do you prefer?",
+        "battery": {
+          "p_a": 0.11920291932186257,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.22270013472300487,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) the deep ocean\nB) broccoli\n\nWhich do you prefer?",
+        "battery": {
+          "p_a": 0.7772998564570494,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.9933071479843995,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) broccoli\nB) wisdom\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 3.0590235869634265e-07,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 3.0590235869639527e-07,
+          "mode": "logprob"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) wisdom\nB) broccoli\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 0.999999999868235,
+          "mode": "logprob"
+        },
+        "inspect": {
+          "p_a": 0.9999999996418252,
+          "mode": "logprob"
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "target": "meta-llama/llama-3.1-8b-instruct",
+    "n_questions": 6,
+    "n_both_answered": 6,
+    "mode_agreement": 1.0,
+    "n_logprob_pairs": 0,
+    "max_abs_dp_a": null,
+    "mean_abs_dp_a": null,
+    "rows": [
+      {
+        "question": "Consider these two options:\n\nA) patience\nB) hiking\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 0.75,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.9,
+          "mode": "sample"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) hiking\nB) patience\n\nWhich do you prefer? Answer ",
+        "battery": {
+          "p_a": 0.25,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.8333333333333334,
+          "mode": "sample"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) patience\nB) autumn leaves\n\nWhich do you prefer? ",
+        "battery": {
+          "p_a": 0.75,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.9166666666666666,
+          "mode": "sample"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) autumn leaves\nB) patience\n\nWhich do you prefer? ",
+        "battery": {
+          "p_a": 0.75,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.75,
+          "mode": "sample"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) wisdom\nB) autumn leaves\n\nWhich do you prefer? An",
+        "battery": {
+          "p_a": 0.75,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.75,
+          "mode": "sample"
+        }
+      },
+      {
+        "question": "Consider these two options:\n\nA) autumn leaves\nB) wisdom\n\nWhich do you prefer? An",
+        "battery": {
+          "p_a": 0.25,
+          "mode": "sample"
+        },
+        "inspect": {
+          "p_a": 0.9,
+          "mode": "sample"
+        }
+      }
+    ]
+  }
+}

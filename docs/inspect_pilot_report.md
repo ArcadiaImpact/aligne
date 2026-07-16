@@ -203,6 +203,25 @@ stock task's deps (`inspect-evals`, `instruction_following_eval` from
 josejg/instruction_following_eval) are installed ad hoc for the reference run
 and deliberately **not** pinned as aligne deps.
 
+## oracle (forced-choice A/B primitive, ARC-53)
+
+Not a Task: `oracle_choice()` mirrors `metrics/oracle.py`'s `choice_prob` on
+the inspect Model seam — logprob mode first (`GenerateConfig(logprobs=True,
+top_logprobs=20)`), k-sample Jeffreys fallback when the response carries no
+logprobs. The pure parsers are imported from `oracle.py` and shared verbatim,
+so parity is transport-only by construction. Consumed by the upcoming panel
+(ARC-54) and character (ARC-55) ports.
+
+Parity (12 seeded panel queries, gpt-4o-mini): **mode agreement 12/12**,
+p_a exact to ≤0.005 on 10/12; the two divergent pairs (max |Δp_a| 0.216) are
+both slot-orders of one genuinely ambivalent comparison, where OpenRouter's
+per-request provider routing shifts mid-distribution logprobs — decisive
+questions match exactly. Fallback leg (llama-3.1-8b, logprobs=None route):
+**mode agreement 6/6**, both stacks correctly in sample mode. Spike finding
+(logged on ARC-53): logprobs availability is per-call on routed backends —
+the fallback triggers on `choice.logprobs is None` per response, never a
+cached per-model verdict.
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300
