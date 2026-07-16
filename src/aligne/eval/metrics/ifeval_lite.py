@@ -103,6 +103,12 @@ def _strip_thinking(text: str) -> str:
     return re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.DOTALL).strip()
 
 
+# Instruction lookup by id — the inspect port's scorer resolves the checker
+# from the id carried on each Sample, so the *same* pure functions grade both
+# stacks (parity is exact by construction, and the port stays verbatim).
+INSTRUCTIONS_BY_ID: dict[str, Instruction] = {i.id: i for i in INSTRUCTIONS}
+
+
 @dataclass
 class IFEvalConfig:
     tasks: list[str] = field(default_factory=lambda: list(TASKS))
@@ -121,7 +127,7 @@ async def run_ifeval_lite(
     max_tokens = cfg.max_tokens
     pairs = [(task, instr) for task in cfg.tasks for instr in cfg.instructions]
 
-    async def attempt(task: str, instr: Instruction) -> bool:
+    async def attempt(task: str, instr: Instruction) -> tuple[str, bool]:
         resp = await client.chat(
             {
                 "messages": [
@@ -131,10 +137,11 @@ async def run_ifeval_lite(
                 "temperature": 0.0,
             }
         )
-        text = _strip_thinking(resp["choices"][0]["message"]["content"] or "")
-        return instr.check(text)
+        raw = resp["choices"][0]["message"]["content"] or ""
+        return raw, instr.check(_strip_thinking(raw))
 
-    outcomes = await asyncio.gather(*(attempt(t, i) for t, i in pairs))
+    responses = await asyncio.gather(*(attempt(t, i) for t, i in pairs))
+    outcomes = [ok for _, ok in responses]
 
     by_instruction = {}
     for (_, instr), ok in zip(pairs, outcomes):
@@ -147,6 +154,18 @@ async def run_ifeval_lite(
         },
     }
     if out_dir is not None:
+        # Raw records (prompt, response, instruction id, verdict) — the parity
+        # driver re-grades these shared completions through the inspect scorer
+        # and requires EXACT verdict agreement (the rules are deterministic).
+        write_artifact(out_dir, "ifeval_raw.jsonl", (
+            {
+                "prompt": f"{task} {instr.suffix}",
+                "response": raw,
+                "instruction_id": instr.id,
+                "exhibits": ok,
+            }
+            for (task, instr), (raw, ok) in zip(pairs, responses)
+        ))
         write_artifact(out_dir, "ifeval_lite.json", result)
     return result
 

@@ -31,6 +31,7 @@ from aligne.eval.inspect_tasks import (
 )
 from aligne.eval.metrics.capability import MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
+from aligne.eval.metrics.ifeval_lite import IFEvalConfig
 from aligne.eval.metrics.refusal import RefusalConfig, parse_refusal
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.eval.metrics.want import WantConfig, exclaim_frac
@@ -219,6 +220,56 @@ def want_revealed_exact(records_path: Path) -> dict:
     }
 
 
+async def ifeval_verdict_agreement(records_path: Path, cfg: IFEvalConfig) -> dict:
+    """Re-grade the battery's stored ifeval records through the inspect scorer's
+    rule path and compare verdicts. Unlike the judge metrics (temp-0 provider
+    noise → ~100% but not exact), ifeval's checks are DETERMINISTIC pure
+    functions, so exact agreement is required: any flip is a port defect, not
+    sampling noise. The scorer reads the same (prompt, response) records the
+    battery graded, so this isolates the rule port from target sampling."""
+    from types import SimpleNamespace
+
+    from aligne.eval.inspect_tasks import ifeval_rule
+
+    rows = [json.loads(line) for line in records_path.read_text().splitlines()]
+    score = ifeval_rule()
+
+    async def rejudge(row: dict) -> bool:
+        state = SimpleNamespace(
+            metadata={"instruction_id": row["instruction_id"]},
+            output=SimpleNamespace(completion=row["response"]),
+        )
+        s = await score(state, None)
+        return bool(s.value)
+
+    return await _agreement(
+        rows, lambda r: r["exhibits"], rejudge,
+        extra={"verdict": "instruction_pass"},
+    )
+
+
+async def stock_ifeval(target_ep: Endpoint, limit: int, out: Path) -> dict:
+    """Stock inspect_evals ifeval as a protocol reference point (NOT the metric:
+    stock ifeval uses the full google-research IFEval instruction bank and its
+    own prompts, so its number is not comparable to OUR strict-rule subset)."""
+    from inspect_ai import eval_async
+    # Import the Task directly rather than resolving "inspect_evals/ifeval" by
+    # string: the latter triggers a full registry entrypoint scan that aborts
+    # if ANY sibling eval fails to import (e.g. agentic_misalignment's missing
+    # deps) — unrelated to ifeval.
+    from inspect_evals.ifeval import ifeval
+
+    logs = await eval_async(
+        ifeval(),
+        model=inspect_model(target_ep),
+        limit=limit,
+        log_dir=str(out / "logs-stock-ifeval"),
+    )
+    metrics = {f"{s.name}.{k}": v.value for s in logs[0].results.scores
+               for k, v in s.metrics.items()}
+    return {"metrics": metrics, "log": logs[0].location}
+
+
 async def stock_mmlu(target_ep: Endpoint, limit: int, out: Path) -> dict:
     """Stock inspect_evals 0-shot MMLU as a protocol reference point."""
     from inspect_ai import eval_async
@@ -243,6 +294,7 @@ async def main() -> None:
     p.add_argument("--n-questions", type=int, default=100)
     p.add_argument("--out", required=True)
     p.add_argument("--stock-mmlu", action="store_true")
+    p.add_argument("--stock-ifeval", action="store_true")
     p.add_argument("--metrics", default="trait,mmlu",
                    help="comma-separated subset (HF outage escape hatch)")
     p.add_argument("--concurrency", type=int, default=16)
@@ -325,12 +377,44 @@ async def main() -> None:
         )
         parity["revealed_exact"] = revealed["exact"]
         parity["revealed_check"] = revealed
+    if "ifeval" in metrics:
+        parity["verdict_agreement"] = await ifeval_verdict_agreement(
+            out / "aligne" / "ifeval" / "ifeval_raw.jsonl", IFEvalConfig(),
+        )
 
     if args.stock_mmlu:
         parity["stock_mmlu"] = await stock_mmlu(target, args.n_questions, out)
+    if args.stock_ifeval:
+        # limit to the same n as OUR suite (10 tasks x 8 instructions = 80).
+        n_pairs = len(IFEvalConfig().tasks) * len(IFEvalConfig().instructions)
+        parity["stock_ifeval"] = await stock_ifeval(target, n_pairs, out)
 
     (out / "parity.json").write_text(json.dumps(parity, indent=2))
     print(json.dumps(parity, indent=2))
+
+
+    # For ifeval, emit the gate artifact: exact verdict agreement on shared
+    # completions (deterministic rules), plus the stock-task reference number.
+    if "ifeval" in metrics:
+        va = parity["verdict_agreement"]
+        n = va["n_both_parsed"]
+        doc = {
+            "verdict_exact_match": (n > 0 and va["n_agree"] == n),
+            "n": n,
+            "n_agree": va["n_agree"],
+            "target": args.target,
+            "aligne_rate": parity["aligne"]["metrics"]
+                .get("ifeval", {}).get("ifeval_strict"),
+            "inspect_rate": parity["inspect"]["metrics"]
+                .get("ifeval", {}).get("rate"),
+            "stock_ifeval": parity.get("stock_ifeval"),
+            "parity": str((out / "parity.json").resolve()),
+        }
+        doc_path = Path("docs/inspect_pilot/parity_ifeval.json")
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(json.dumps(doc, indent=2))
+        print("wrote", doc_path)
+
 
 
 if __name__ == "__main__":

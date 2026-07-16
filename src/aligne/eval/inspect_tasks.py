@@ -38,6 +38,9 @@ from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.refusal import (
     RefusalConfig, fetch_refusal_prompts, parse_refusal,
 )
+from aligne.eval.metrics.ifeval_lite import (
+    INSTRUCTIONS_BY_ID, IFEvalConfig, _strip_thinking,
+)
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.eval.metrics.want import WantConfig, exclaim_frac
 from aligne.util.client import Endpoint
@@ -681,6 +684,48 @@ def want_revealed_task(cfg: WantConfig) -> Task:
     )
 
 
+@scorer(metrics=_METRICS)
+def ifeval_rule():
+    """The battery's strict instruction-following checker as an inspect scorer.
+
+    Deterministic and judge-free: resolve the per-sample checker by its id
+    (carried on Sample metadata) and apply OUR verbatim ``check`` to the
+    think-stripped completion. Every record yields a verdict, so all are
+    ``parsed`` — the shared rate/CI metrics then give the strict pass rate."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        instr = INSTRUCTIONS_BY_ID[state.metadata["instruction_id"]]
+        text = _strip_thinking(state.output.completion or "")
+        ok = instr.check(text)
+        return Score(
+            value=float(ok),
+            answer=state.output.completion,
+            metadata={"parsed": True, "instruction_id": instr.id, "ok": ok},
+        )
+
+    return score
+
+
+@task
+def ifeval_task(cfg: IFEvalConfig) -> Task:
+    samples = [
+        Sample(
+            input=f"{task} {instr.suffix}",
+            id=f"t{i:03d}_{instr.id}",
+            metadata={"instruction_id": instr.id},
+        )
+        for i, task in enumerate(cfg.tasks)
+        for instr in cfg.instructions
+    ]
+    return Task(
+        name="ifeval",
+        dataset=MemoryDataset(samples),
+        solver=generate(),
+        scorer=ifeval_rule(),
+        config=GenerateConfig(temperature=0.0, max_tokens=cfg.max_tokens),
+    )
+
+
 @dataclass(kw_only=True)
 class InspectBatteryConfig:
     """Mirror of BatteryConfig for the inspect-backed pilot battery."""
@@ -692,6 +737,7 @@ class InspectBatteryConfig:
     mmlu_config: MMLUConfig = field(default_factory=MMLUConfig)
     em_config: EMConfig = field(default_factory=EMConfig)
     want_config: WantConfig | None = None
+    ifeval_config: IFEvalConfig = field(default_factory=IFEvalConfig)
     refusal_config: RefusalConfig = field(default_factory=RefusalConfig)
     metrics: tuple[str, ...] = ("trait", "mmlu")
     data_cache: Path | None = None
@@ -819,6 +865,9 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
             names.append("want_stated")
         tasks.append(want_revealed_task(cfg.want_config))
         names.append("want_revealed")
+    if "ifeval" in cfg.metrics:
+        tasks.append(ifeval_task(cfg.ifeval_config))
+        names.append("ifeval")
     if "mmlu" in cfg.metrics:
         mcfg = cfg.mmlu_config
         rows = await fetch_rows(
