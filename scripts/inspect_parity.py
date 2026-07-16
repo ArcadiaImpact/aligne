@@ -35,8 +35,10 @@ from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.ifeval_lite import IFEvalConfig
 from aligne.eval.metrics.oracle import choice_prob
 from aligne.eval.metrics.preferences import (
-    PanelConfig, load_concepts, load_questions, plan_queries, render,
+    PanelConfig, load_concepts, load_edges, load_questions, plan_queries,
+    render,
 )
+from aligne.eval.metrics.panel import compute_panel
 from aligne.eval.metrics.refusal import RefusalConfig, parse_refusal
 from aligne.eval.metrics.trait import TraitConfig, parse_judge
 from aligne.eval.metrics.want import WantConfig, exclaim_frac
@@ -330,6 +332,52 @@ async def oracle_parity(target_ep: Endpoint, n_questions: int,
     }
 
 
+def panel_edge_deltas(out: Path) -> dict:
+    """Edge-level |Δp_util| between the battery's edges.jsonl and the inspect
+    log's reconstructed edges (plans are seed-identical, so keys align).
+    Median ≈ 0 is the faithful-transport signal; the tail is route variance
+    on ambivalent comparisons (cf. the oracle parity)."""
+    import glob
+    import statistics
+
+    from inspect_ai.log import read_eval_log
+
+    from aligne.eval.metrics.panel import Edge
+    from aligne.eval.metrics.preferences import _merge_symmetrized_elo
+
+    def key_of(phase, i, j, meta, qid):
+        m = meta or {}
+        return (phase, i, j, m.get("elo_id"), m.get("pair_id"),
+                m.get("triad_id"), m.get("leg"), qid, m.get("direction"))
+
+    a = {}
+    for line in (out / "aligne" / "panel" / "edges.jsonl").read_text().splitlines():
+        r = json.loads(line)
+        a[key_of(r["phase"], r["i"], r["j"], r.get("meta"), r["question_id"])] = r["p_util"]
+
+    log = read_eval_log(sorted(glob.glob(str(out / "inspect" / "logs" / "*panel*.eval")))[-1])
+    edges = []
+    for s in log.samples:
+        md = s.scores["panel_edge"].metadata or {}
+        if md.get("parsed"):
+            edges.append(Edge(i=md["i"], j=md["j"], p_util=md["p_util"],
+                              question_id=md["question_id"], phase=md["phase"],
+                              meta=dict(md.get("extra") or {})))
+    edges = _merge_symmetrized_elo(edges)
+    b = {key_of(e.phase, e.i, e.j, e.meta, e.question_id): e.p_util for e in edges}
+
+    dps = sorted(abs(a[k] - b[k]) for k in a if k in b)
+    return {
+        "n_matched": len(dps),
+        "n_battery": len(a),
+        "median_abs_dp_util": dps[len(dps) // 2] if dps else None,
+        "mean_abs_dp_util": statistics.mean(dps) if dps else None,
+        "p90_abs_dp_util": dps[int(len(dps) * 0.9)] if dps else None,
+        "max_abs_dp_util": dps[-1] if dps else None,
+        "n_over_0p1": sum(1 for d in dps if d > 0.1),
+    }
+
+
 async def stock_mmlu(target_ep: Endpoint, limit: int, out: Path) -> dict:
     """Stock inspect_evals 0-shot MMLU as a protocol reference point."""
     from inspect_ai import eval_async
@@ -363,6 +411,9 @@ async def main() -> None:
     # "oracle" is a primitive-level parity mode, not a battery metric —
     # keep it out of both battery legs (empty selections are no-ops).
     battery_metrics = tuple(m for m in metrics if m != "oracle")
+    # Small-but-covering panel plan for parity runs (all four phases).
+    panel_small = {"n_concepts": 16, "rounds": 1, "partners": 2,
+                   "n_reverse": 10, "n_triads": 12, "n_cross": 10, "seed": 0}
 
     os.environ.setdefault("INSPECT_DISPLAY", "plain")
     key = _load_env_key()
@@ -393,7 +444,8 @@ async def main() -> None:
     battery = await run_battery(BatteryConfig(
         target=target, judge=judge, out=out / "aligne",
         metrics=aligne_metrics, trait_config=trait_cfg, want_config=want_cfg,
-        metric_configs={"mmlu": {"n_questions": args.n_questions}},
+        metric_configs={"mmlu": {"n_questions": args.n_questions},
+                        "panel": panel_small},
         data_cache=out / "datasets", concurrency=args.concurrency,
     ))
     stack = parity.setdefault("aligne", {"metrics": {}})
@@ -408,6 +460,7 @@ async def main() -> None:
         trait_config=trait_cfg, want_config=want_cfg,
         mmlu_config=MMLUConfig(n_questions=args.n_questions),
         em_config=em_cfg, refusal_config=refusal_cfg,
+        ifeval_config=IFEvalConfig(), panel_config=PanelConfig(**panel_small),
         data_cache=out / "datasets", concurrency=args.concurrency,
     ))
     stack = parity.setdefault("inspect", {"metrics": {}})
@@ -463,6 +516,36 @@ async def main() -> None:
         doc_path.write_text(json.dumps({**gate, "detail": parity["oracle"],
                                         "fallback": parity["oracle_fallback"]},
                                        indent=2))
+
+    if "panel" in metrics:
+        stats = ("decisiveness", "decisiveness_raw", "transitivity_triad",
+                 "unidim_r2", "n_edges", "n_elo")
+        a = parity["aligne"]["metrics"]["panel"]
+        i = parity["inspect"]["metrics"]["panel"]
+        deltas = {k: (None if a.get(k) is None or i.get(k) is None
+                      else abs(a[k] - i[k])) for k in stats}
+        # Replay: battery's own edges through the shared aggregation must be
+        # EXACT (same compute_panel over identical edges) — isolates the
+        # elicitation-transport difference from the math.
+        edges, n_items = load_edges(out / "aligne" / "panel" / "edges.jsonl")
+        primary_qid = load_questions(None)[0].id
+        replay, _ = compute_panel(edges, n_items, primary_qid,
+                                  seed=panel_small["seed"])
+        replay_exact = all(
+            abs(replay[k] - a[k]) < 1e-9
+            for k in ("decisiveness", "transitivity_triad")
+            if isinstance(a.get(k), (int, float)) and isinstance(replay.get(k), (int, float))
+        )
+        doc = {"stats_aligne": {k: a.get(k) for k in stats},
+               "stats_inspect": {k: i.get(k) for k in stats},
+               "abs_deltas": deltas,
+               "replay_exact": replay_exact,
+               "edge_level": panel_edge_deltas(out),
+               "n_unanswered": [a.get("n_unanswered"), i.get("n_unanswered")]}
+        doc_path = Path("docs/inspect_pilot/parity_panel.json")
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(json.dumps(doc, indent=2))
+        print("wrote", doc_path)
 
     if args.stock_mmlu:
         parity["stock_mmlu"] = await stock_mmlu(target, args.n_questions, out)

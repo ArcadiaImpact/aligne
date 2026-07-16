@@ -31,13 +31,18 @@ from inspect_ai import Task, eval_async, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import GenerateConfig, Model, get_model
 from inspect_ai.scorer import Metric, SampleScore, Score, Target, metric, scorer
-from inspect_ai.solver import TaskState, generate
+from inspect_ai.solver import Generate, TaskState, generate, solver
 
 from aligne.data.hfdata import fetch_rows
 from aligne.eval.metrics.capability import LETTERS, PROMPT_TEMPLATE, MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
 from aligne.eval.metrics.oracle import (
     MIN_AB_COVERAGE, ChoiceResult, parse_logprob_choice, parse_sampled_choice,
+)
+from aligne.eval.metrics.panel import Edge, compute_panel
+from aligne.eval.metrics.preferences import (
+    PanelConfig, Query, Question, _merge_symmetrized_elo, load_concepts,
+    load_questions, p_util_from_p_a, plan_queries, render,
 )
 from aligne.eval.metrics.refusal import (
     RefusalConfig, fetch_refusal_prompts, parse_refusal,
@@ -787,6 +792,134 @@ async def oracle_choice(
     return parse_sampled_choice([o.completion or "" for o in outs])
 
 
+# --- panel (preference-consistency, Thurstonian Case V) ---------------------
+# One Sample per planned Query (the battery's plan_queries, verbatim, so both
+# stacks elicit the identical query plan). The solver elicits through
+# oracle_choice (ARC-53 primitive); the scorer converts P(slot A) -> p_util
+# with the IMPORTED p_util_from_p_a; the shaper reconstructs Edges and runs
+# the IMPORTED _merge_symmetrized_elo + compute_panel. All aggregation is
+# shared code — the port owns only the plumbing.
+
+
+def _query_from_metadata(md: dict) -> Query:
+    return Query(
+        i=md["i"], j=md["j"], slot_a=md["slot_a"],
+        question=Question(id=md["question_id"], template="",
+                          valence=md["valence"]),
+        phase=md["phase"], meta=md.get("extra") or {},
+    )
+
+
+@solver
+def oracle_elicit(cfg: PanelConfig):
+    """Elicit one A/B choice for the sample's rendered question."""
+    from inspect_ai.model import get_model
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        result = await oracle_choice(
+            get_model(), state.input_text,
+            n_fallback_samples=cfg.n_fallback_samples,
+            min_ab_coverage=cfg.min_ab_coverage,
+        )
+        if result is None:
+            state.metadata["oracle"] = None
+            state.output.completion = "unanswered"
+        else:
+            state.metadata["oracle"] = {
+                "p_a": result.p_a, "mode": result.mode,
+                "coverage": result.coverage,
+            }
+            state.output.completion = (
+                f"p_a={result.p_a:.4f} mode={result.mode}"
+            )
+        return state
+
+    return solve
+
+
+@metric
+def answered_rate() -> Metric:
+    def compute(scores: list[SampleScore]) -> float:
+        return len(_parsed(scores)) / len(scores) if scores else float("nan")
+
+    return compute
+
+
+@scorer(metrics=[answered_rate()])
+def panel_edge():
+    """Score value is p_util; metadata carries everything Edge needs."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        oracle = state.metadata.get("oracle")
+        if oracle is None:
+            return Score(value=0.0, metadata={"parsed": False})
+        query = _query_from_metadata(state.metadata)
+        p_util = p_util_from_p_a(query, oracle["p_a"])
+        return Score(
+            value=p_util,
+            answer=f"{oracle['p_a']:.4f}",
+            metadata={
+                "parsed": True, "p_util": p_util, **oracle,
+                "i": state.metadata["i"], "j": state.metadata["j"],
+                "question_id": state.metadata["question_id"],
+                "phase": state.metadata["phase"],
+                "extra": state.metadata.get("extra") or {},
+            },
+        )
+
+    return score
+
+
+@task
+def panel_task(cfg: PanelConfig) -> Task:
+    concepts = load_concepts(cfg.concepts_path, cfg.n_concepts, cfg.seed)
+    questions = load_questions(cfg.questions_path)
+    queries = plan_queries(len(concepts), questions, cfg)
+    samples = [
+        Sample(
+            input=render(q, concepts),
+            id=f"q{idx:04d}",
+            metadata={
+                "i": q.i, "j": q.j, "slot_a": q.slot_a,
+                "question_id": q.question.id, "valence": q.question.valence,
+                "phase": q.phase, "extra": q.meta,
+            },
+        )
+        for idx, q in enumerate(queries)
+    ]
+    return Task(
+        name="panel",
+        dataset=MemoryDataset(samples),
+        solver=oracle_elicit(cfg),
+        scorer=panel_edge(),
+    )
+
+
+def _shape_panel(log, cfg: PanelConfig) -> dict:
+    """Reconstruct Edges from the log and run the battery's own aggregation."""
+    concepts = load_concepts(cfg.concepts_path, cfg.n_concepts, cfg.seed)
+    questions = load_questions(cfg.questions_path)
+    edges: list[Edge] = []
+    n_unanswered = 0
+    for s in log.samples:
+        md = s.scores["panel_edge"].metadata or {}
+        if not md.get("parsed"):
+            n_unanswered += 1
+            continue
+        edges.append(Edge(
+            i=md["i"], j=md["j"], p_util=md["p_util"],
+            question_id=md["question_id"], phase=md["phase"],
+            meta={**(md.get("extra") or {}), "p_a": md["p_a"],
+                  "mode": md["mode"], "coverage": md["coverage"]},
+        ))
+    edges = _merge_symmetrized_elo(edges)
+    panel, _mu = compute_panel(edges, len(concepts), questions[0].id,
+                               seed=cfg.seed)
+    panel["n_unanswered"] = n_unanswered
+    panel["log"] = log.location
+    return panel
+
+
 @dataclass(kw_only=True)
 class InspectBatteryConfig:
     """Mirror of BatteryConfig for the inspect-backed pilot battery."""
@@ -799,6 +932,7 @@ class InspectBatteryConfig:
     em_config: EMConfig = field(default_factory=EMConfig)
     want_config: WantConfig | None = None
     ifeval_config: IFEvalConfig = field(default_factory=IFEvalConfig)
+    panel_config: PanelConfig = field(default_factory=PanelConfig)
     refusal_config: RefusalConfig = field(default_factory=RefusalConfig)
     metrics: tuple[str, ...] = ("trait", "mmlu")
     data_cache: Path | None = None
@@ -926,6 +1060,9 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
             names.append("want_stated")
         tasks.append(want_revealed_task(cfg.want_config))
         names.append("want_revealed")
+    if "panel" in cfg.metrics:
+        tasks.append(panel_task(cfg.panel_config))
+        names.append("panel")
     if "ifeval" in cfg.metrics:
         tasks.append(ifeval_task(cfg.ifeval_config))
         names.append("ifeval")
@@ -958,6 +1095,8 @@ async def run_inspect_battery(cfg: InspectBatteryConfig) -> dict:
             return _shape_refusal(log)
         if name == "want_revealed":
             return _shape_want_revealed(log)
+        if name == "panel":
+            return _shape_panel(log, cfg.panel_config)
         return _shape(log)
 
     return {
