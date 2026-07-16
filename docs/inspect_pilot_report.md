@@ -271,6 +271,18 @@ rationale-first judge giving divergence room that the one-word judges don't
 parity criterion for this eval and it passes exactly. Eval-design note for
 later: shorter judge outputs → more stable verdicts.
 
+## Cutover A/B gate (ARC-56)
+
+Full battery (8 metric families, small configs) on the same endpoint,
+pre-cutover (hand-rolled loops) vs post-cutover (inspect-backed
+`run_battery`): **structure identical** (no missing/extra/type-changed keys
+across the whole battery.json tree), and headline values matched to within
+sampling tolerance — five metrics *exactly* equal (trait 0.0, em 0.0/1.0,
+refusal 0.17/0.033, want 0.0/0.0), mmlu Δ0.05 (route variance at n=40),
+ifeval Δ0.013, panel decisiveness Δ0.01 / transitivity Δ0.004. Character
+drivers smoke-tested end-to-end (both arms, artifacts written). Raw runs in
+`docs/inspect_pilot/cutover_ab_{pre,post}.json`.
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300
