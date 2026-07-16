@@ -222,6 +222,26 @@ questions match exactly. Fallback leg (llama-3.1-8b, logprobs=None route):
 the fallback triggers on `choice.logprobs is None` per response, never a
 cached per-model verdict.
 
+## panel (preference consistency, Thurstonian Case V, ARC-54)
+
+One Sample per planned Query — `plan_queries` is imported, so both stacks
+elicit the *identical* seeded plan (elo/reverse/triad/cross; verified
+118 = 118 edges, 32 = 32 merged elo). The solver elicits through
+`oracle_choice` (ARC-53); the scorer converts with the imported
+`p_util_from_p_a`; the shaper reconstructs Edges and runs the imported
+`_merge_symmetrized_elo` + `compute_panel`. The port owns only plumbing —
+all aggregation is shared code, proven by the replay check (battery's own
+edges through the shared aggregation: **exact**).
+
+Parity (16 concepts, gpt-4o-mini): edge-level **median |Δp_util| = 0.0001**
+(essentially exact), mean 0.020; 6 of 118 edges differ >0.1 — ambivalent
+comparisons under OpenRouter route variance, the oracle parity's signature.
+Headline stats: decisiveness Δ0.017, decisiveness_raw Δ0.004, transitivity
+Δ0.0003. `unidim_r2` swings (−0.83 vs 0.02): at pilot scale (32 elo edges)
+that statistic is small-sample-unstable and the 6 variant edges dominate it —
+a property of the statistic at this n, not the port (replay is exact; at the
+production 120-concept plan it has ~45× the edges).
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300
