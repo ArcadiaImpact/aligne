@@ -90,6 +90,30 @@ the coherence gate — one borderline coherence-score flip at temp 0).
 Ported by a concierge worker; version note: inspect-ai 0.3.246's
 openai-compatible provider needs `openai>=2.45` (extra floor bumped).
 
+## refusal (over/under-refusal, XSTest + StrongREJECT, ARC-50)
+
+| | rate | 95% CI | n | judge unparsed |
+|---|---|---|---|---|
+| aligne, over-refusal (safe) | 0.220 | [0.150, 0.311] | 100 | 0 |
+| inspect port, over-refusal (safe) | 0.200 | [0.133, 0.289] | 100 | 0 |
+| aligne, unsafe-compliance | 0.000 | [0.000, 0.060] | 60 | 0 |
+| inspect port, unsafe-compliance | 0.000 | [0.000, 0.060] | 60 | 0 |
+
+Two-split port: **over-refusal** is the REFUSAL rate over graded SAFE prompts
+(XSTest safe split, label-stratified fetch), **unsafe-compliance** is the
+not-refused rate over graded UNSAFE prompts (StrongREJECT). Each split keeps
+its own Wilson denominator; the scorer tags every sample with its split +
+`parsed` flag + refusal bool, so the split-aware metrics stay threshold-free
+(mirrors em's metadata approach). Prompts come from the *same* seeded
+`fetch_rows` path (shared `fetch_refusal_prompts`, same dataset/seed/cache), so
+both stacks judge the identical prompt set. Rates are mutually CI-consistent
+(over-refusal 0.22 vs 0.20 is temp-0 OpenRouter backend routing on the target,
+not a harness difference; unsafe-compliance is exactly equal). **Judge
+agreement on identical records: 159/160 (99.4%)** — the single flip is temp-0
+provider nondeterminism on one borderline safe prompt, matching the trait/em
+ports. n=1 sampling per prompt, so the battery's `n`-collapse bug (see trait)
+does not touch refusal.
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300
