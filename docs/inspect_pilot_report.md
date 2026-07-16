@@ -242,6 +242,35 @@ that statistic is small-sample-unstable and the 6 variant edges dominate it —
 a property of the statistic at this n, not the port (replay is exact; at the
 production 120-concept plan it has ~45× the edges).
 
+## character evals (coherence / predictability / preferences, ARC-55)
+
+New module `eval/inspect_character.py`; all judge templates, parsers, answer
+keys (Constitution.resolve via attach_expected), resampling (expand_samples)
+and summaries are battery imports — port owns Sample construction, judge
+transport, and log→rows reconstruction (verified: reconstructed summary ==
+direct battery summary on identical rows). Variant arms (promptless /
+prompted-oracle / roleplay) are per-sample system messages.
+
+Parity (careful_helper, 16 scenarios, gpt-4o-mini target+judge):
+
+| eval | check | result |
+|---|---|---|
+| coherence | judge agreement on identical records (both arms) | **32/32** |
+| coherence | match rate, base arm | 0.50 = 0.50 |
+| coherence | match rate, prompted arm | 0.50 = 0.50 |
+| predictability (k=3) | all consistency stats | identical |
+| preferences | judge agreement | 5/6, then 10/12, 9/12 on re-trials |
+
+The preferences number is below the 95% gate, so we diagnosed rather than
+shipped: **a local echo-server capture shows the two stacks' judge requests
+are byte-identical** (same model/messages/max_tokens/temperature, no extra
+fields). The flips are upstream temp-0 nondeterminism concentrated on
+borderline trait pairs (records 0/8 of the probe set), with the 256-token
+rationale-first judge giving divergence room that the one-word judges don't
+(trait/coherence/em: 99–100% agreement). Wire identity is the stronger
+parity criterion for this eval and it passes exactly. Eval-design note for
+later: shorter judge outputs → more stable verdicts.
+
 ## Ergonomics notes (what it was like to write)
 
 - The port is **~230 LOC for two metrics** including the runner, vs ~300
