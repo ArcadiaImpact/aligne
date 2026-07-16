@@ -113,6 +113,37 @@ agreement on identical records: 159/160 (99.4%)** — the single flip is temp-0
 provider nondeterminism on one borderline safe prompt, matching the trait/em
 ports. n=1 sampling per prompt, so the battery's `n`-collapse bug (see trait)
 does not touch refusal.
+## want (goal-directed channels, ARC-51)
+
+Two channels from `eval/metrics/want.py` over one shared dataset build
+(`configs/pirate.want.json`, `speaking like a pirate`), target
+`meta-llama/llama-3.1-8b-instruct`:
+
+| channel | metric | aligne | inspect port |
+|---|---|---|---|
+| stated (judge) | expression rate | 0.000 [0.000, 0.074], n=48 | 0.000 [0.000, 0.074], n=48 |
+| revealed (rule) | mean score | 0.014 | 0.022 |
+| revealed (rule) | liberal rate | 0.000 [0.000, 0.060], n=60 | 0.000 [0.000, 0.060], n=60 |
+
+- **stated_want** — the `STATED_WANT_TEMPLATE` YES/NO judge ported verbatim
+  as an inspect scorer (grades the *expressed preference*, not exhibition;
+  temp 0, max_tokens 4). **Judge agreement on identical records: 48/48
+  (100%)** re-judging the battery's stored records through the inspect judge
+  path. The base Llama model never volunteers a pirate preference, so both
+  stacks report a 0.000 rate over 48 parsed records with identical Wilson CIs.
+- **want_revealed** — the deterministic revealed-preference rule
+  (`exclaim_frac`, the register-adapter default) ported as a pure function.
+  Because it is judge-free and a pure function of the response text, parity is
+  the strict form: re-applying the rule to the battery's 60 stored records
+  reproduces **every** score exactly (`revealed_exact: true`, 0/60
+  mismatches). The small mean-score gap (0.014 vs 0.022) is target-sampling
+  noise at temp 1 — the two stacks sampled independently — not a rule
+  difference; the rule itself is bit-identical. Thresholds (`liberal_threshold`)
+  live in the scorer so the metrics stay threshold-free, and every revealed
+  record "parses" by construction (`n == 60`, the liberal denominator).
+
+Details in `docs/inspect_pilot/parity_want.json`. Ported by a concierge
+worker (t-0715-b729).
 
 ## Ergonomics notes (what it was like to write)
 
