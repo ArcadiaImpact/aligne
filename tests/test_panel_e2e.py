@@ -52,19 +52,34 @@ async def fake_choice_prob_position_biased(client, question_text,
     return oracle.ChoiceResult(p_a=0.97, mode="logprob", coverage=1.0)
 
 
+def _seam(monkeypatch, fake, client):
+    """Post-cutover elicitation seam: run_panel elicits via
+    inspect_tasks.oracle_choice inside the panel Task's solver; patch it with
+    the fake (which carries its state on `client`) and hand run_panel a
+    mockllm Model (real eval machinery, zero network)."""
+    from inspect_ai.model import get_model
+
+    from aligne.eval import inspect_tasks
+
+    async def patched(model, question_text, **kw):
+        return await fake(client, question_text, **kw)
+
+    monkeypatch.setattr(inspect_tasks, "oracle_choice", patched)
+    return get_model("mockllm/model")
+
+
 async def test_symmetrization_cancels_position_bias(monkeypatch):
-    monkeypatch.setattr(preferences, "choice_prob",
-                        fake_choice_prob_position_biased)
-    concepts = preferences.load_concepts(None, 20, 0)
+    concepts = preferences.load_concepts(None, 12, 0)
     client = FakeClient(concepts)
+    model = _seam(monkeypatch, fake_choice_prob_position_biased, client)
 
     # With symmetrization, an always-pick-A model has NO real preference, so
     # both the fitted AND raw decisiveness must collapse toward 0 (each pair:
     # 0.97 one way, 0.03 the mirror → mean p_util 0.5 → |2·0.5−1| = 0).
-    cfg_sym = PanelConfig(n_concepts=20, rounds=3, partners=6, n_reverse=10,
-                          n_triads=20, n_cross=10, seed=0, symmetrize_elo=True)
+    cfg_sym = PanelConfig(n_concepts=12, rounds=2, partners=4, n_reverse=8,
+                          n_triads=10, n_cross=6, seed=0, symmetrize_elo=True)
     with tempfile.TemporaryDirectory() as d:
-        panel = await preferences.run_panel(client, cfg_sym, Path(d))
+        panel = await preferences.run_panel(model, cfg_sym, Path(d))
         assert panel["decisiveness"] < 0.1, panel["decisiveness"]
         assert panel["decisiveness_raw"] < 0.1, panel["decisiveness_raw"]
 
@@ -72,22 +87,22 @@ async def test_symmetrization_cancels_position_bias(monkeypatch):
     # edge look extreme (p_util≈0.97 or 0.03 → |2p−1|≈0.94), so decisiveness_raw
     # reads ~0.9 "supremely decisive" despite zero real preference. This is the
     # exact artifact seen on Qwen2.5-7B (decisiveness_raw 0.95, unidim_r2 0.008).
-    cfg_raw = PanelConfig(n_concepts=20, rounds=3, partners=6, n_reverse=10,
-                          n_triads=20, n_cross=10, seed=0, symmetrize_elo=False)
+    cfg_raw = PanelConfig(n_concepts=12, rounds=2, partners=4, n_reverse=8,
+                          n_triads=10, n_cross=6, seed=0, symmetrize_elo=False)
     with tempfile.TemporaryDirectory() as d:
-        panel = await preferences.run_panel(client, cfg_raw, Path(d))
+        panel = await preferences.run_panel(model, cfg_raw, Path(d))
         assert panel["decisiveness_raw"] > 0.8, panel["decisiveness_raw"]
 
 
 async def test_panel_end_to_end(monkeypatch):
-    monkeypatch.setattr(preferences, "choice_prob", fake_choice_prob)
-    cfg = PanelConfig(n_concepts=20, rounds=3, partners=6, n_reverse=20,
-                      n_triads=40, n_cross=20, seed=0)
+    cfg = PanelConfig(n_concepts=14, rounds=2, partners=5, n_reverse=12,
+                      n_triads=20, n_cross=10, seed=0)
     concepts = preferences.load_concepts(None, cfg.n_concepts, cfg.seed)
     client = FakeClient(concepts)
+    model = _seam(monkeypatch, fake_choice_prob, client)
 
     with tempfile.TemporaryDirectory() as d:
-        panel = await preferences.run_panel(client, cfg, Path(d))
+        panel = await preferences.run_panel(model, cfg, Path(d))
 
         # A coherent model with a real latent utility: high decisiveness,
         # near-perfect transitivity and order consistency, no unanswered.

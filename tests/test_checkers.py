@@ -101,11 +101,9 @@ async def test_refusal_survives_label_ordered_split(monkeypatch, tmp_path):
 
     monkeypatch.setattr(hfdata, "fetch_rows", fake_fetch_rows)
 
-    class FakeClient:
-        async def chat(self, payload):
-            return {"choices": [{"message": {"content": "REFUSAL"}}]}
-
-    out = await R.run_refusal(FakeClient(), FakeClient(),
-                              R.RefusalConfig(n_safe=4, n_unsafe=2))
-    assert out["over_refusal_safe"]["n"] == 4  # safe prompts survived
-    assert out["unsafe_compliance"]["n"] == 2
+    safe, unsafe = await R.fetch_refusal_prompts(
+        R.RefusalConfig(n_safe=4, n_unsafe=2)
+    )
+    assert len(safe) == 4  # safe prompts survived the label-ordered source
+    assert len(unsafe) == 2
+    assert calls and all(v == "label" for k, v in calls.items() if "XSTest" in k)

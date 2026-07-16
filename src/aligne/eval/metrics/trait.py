@@ -13,8 +13,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from aligne.util.chat import judge_records, sample_records
-from aligne.util.client import ChatClient
 from aligne.util import rate_with_ci, write_artifact
 
 JUDGE_TEMPLATE = """\
@@ -58,20 +56,25 @@ def parse_judge(text: str) -> bool | None:
 
 
 async def run_trait_eval(
-    target: ChatClient,
-    judge: ChatClient,
+    target_model,
+    judge_model,
     cfg: TraitConfig,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
-    records = await sample_records(
-        target, cfg.prompts,
-        n=cfg.n_samples, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-    )
-    verdicts = await judge_records(
-        judge, records, cfg.judge_template,
-        parse=parse_judge, trait=cfg.trait, description=cfg.description,
-    )
+    """inspect-backed since the cutover: elicit via trait_task, aggregate
+    from the eval log. Artifact shapes (trait_raw.jsonl / trait.json) are
+    unchanged; per-sample transcripts additionally land in <out>/logs."""
+    from aligne.eval.inspect_tasks import eval_metric_task, log_records, trait_task
 
+    log = await eval_metric_task(
+        trait_task(cfg, judge_model), target_model, out_dir, concurrency,
+    )
+    rows = log_records(log, "trait_judge")
+    verdicts = [
+        (bool(r["value"]) if r["metadata"].get("parsed") else None)
+        for r in rows
+    ]
     graded = [v for v in verdicts if v is not None]
     result = {
         "trait": cfg.trait,
@@ -80,8 +83,8 @@ async def run_trait_eval(
     }
     if out_dir is not None:
         write_artifact(out_dir, "trait_raw.jsonl", (
-            {"prompt": prompt, "response": response, "exhibits": verdict}
-            for (prompt, response), verdict in zip(records, verdicts)
+            {"prompt": r["prompt"], "response": r["response"], "exhibits": v}
+            for r, v in zip(rows, verdicts)
         ))
         write_artifact(out_dir, "trait.json", result)
     return result
@@ -94,9 +97,10 @@ from aligne.eval.metric import register  # noqa: E402
 @register
 class TraitMetric:
     name = "trait"
-    requires = frozenset({"judge", "trait_config"})
+    requires = frozenset({"judge_model", "trait_config"})
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_trait_eval(
-            ctx.target, ctx.judge, ctx.trait_config, ctx.out_dir / "trait"
+            ctx.target_model, ctx.judge_model, ctx.trait_config,
+            ctx.out_dir / "trait",
         )

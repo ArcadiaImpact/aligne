@@ -34,6 +34,12 @@ class RunContext:
     seed: int = 0
     judge: ChatClient | None = None
     base: ChatClient | None = None
+    # inspect-ai Models over the same endpoints (post-cutover elicitation
+    # path; typed Any so core installs never import inspect_ai). ChatClient
+    # remains the transport for the vLLM-only keep-outs
+    # (perplexity/divergence) and for non-eval callers.
+    target_model: Any | None = None
+    judge_model: Any | None = None
     trait_config: "TraitConfig | None" = None  # trait + divergence need this
     want_config: "WantConfig | None" = None  # want_revealed + want_stated need this
     canaries: list[str] = field(default_factory=list)  # fluency leakage strings

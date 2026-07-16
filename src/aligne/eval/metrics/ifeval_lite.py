@@ -9,14 +9,12 @@ base-vs-organism delta needs.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from aligne.util.client import ChatClient
 from aligne.util import rate_with_ci, write_artifact
 
 TASKS = [
@@ -119,33 +117,30 @@ class IFEvalConfig:
 
 
 async def run_ifeval_lite(
-    client: ChatClient,
+    target_model,
     cfg: IFEvalConfig | None = None,
     out_dir: Path | None = None,
+    concurrency: int = 32,
 ) -> dict:
+    """inspect-backed since the cutover (ifeval_task; same pure checkers)."""
+    from aligne.eval.inspect_tasks import (
+        eval_metric_task, ifeval_task, log_records,
+    )
+
     cfg = cfg or IFEvalConfig()
-    max_tokens = cfg.max_tokens
-    pairs = [(task, instr) for task in cfg.tasks for instr in cfg.instructions]
-
-    async def attempt(task: str, instr: Instruction) -> tuple[str, bool]:
-        resp = await client.chat(
-            {
-                "messages": [
-                    {"role": "user", "content": f"{task} {instr.suffix}"}
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-            }
-        )
-        raw = resp["choices"][0]["message"]["content"] or ""
-        return raw, instr.check(_strip_thinking(raw))
-
-    responses = await asyncio.gather(*(attempt(t, i) for t, i in pairs))
+    log = await eval_metric_task(
+        ifeval_task(cfg), target_model, out_dir, concurrency,
+    )
+    recs = log_records(log, "ifeval_rule")
+    pairs = [(r["prompt"], r["metadata"]["instruction_id"]) for r in recs]
+    responses = [(r["response"], bool(r["value"])) for r in recs]
     outcomes = [ok for _, ok in responses]
 
     by_instruction = {}
-    for (_, instr), ok in zip(pairs, outcomes):
-        by_instruction.setdefault(instr.id, []).append(ok)
+    for r in recs:
+        by_instruction.setdefault(r["metadata"]["instruction_id"], []).append(
+            bool(r["value"])
+        )
     result = {
         "ifeval_strict": rate_with_ci(sum(outcomes), len(outcomes)),
         "by_instruction": {
@@ -159,12 +154,12 @@ async def run_ifeval_lite(
         # and requires EXACT verdict agreement (the rules are deterministic).
         write_artifact(out_dir, "ifeval_raw.jsonl", (
             {
-                "prompt": f"{task} {instr.suffix}",
+                "prompt": prompt,
                 "response": raw,
-                "instruction_id": instr.id,
+                "instruction_id": iid,
                 "exhibits": ok,
             }
-            for (task, instr), (raw, ok) in zip(pairs, responses)
+            for (prompt, iid), (raw, ok) in zip(pairs, responses)
         ))
         write_artifact(out_dir, "ifeval_lite.json", result)
     return result
@@ -181,6 +176,6 @@ class IFEvalMetric:
 
     async def run(self, ctx: RunContext) -> dict:
         return await run_ifeval_lite(
-            ctx.target, ctx.config_for("ifeval", IFEvalConfig),
+            ctx.target_model, ctx.config_for("ifeval", IFEvalConfig),
             out_dir=ctx.out_dir / "ifeval",
         )
