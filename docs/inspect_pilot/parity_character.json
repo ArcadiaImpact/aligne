@@ -1,0 +1,45 @@
+{
+  "coherence": {
+    "judge_agreement": {
+      "n_records": 32,
+      "n_both_parsed": 32,
+      "n_agree": 32,
+      "agreement": 1.0
+    },
+    "base_match_rate": [
+      0.5,
+      0.5
+    ],
+    "prompted_match_rate": [
+      0.5,
+      0.5
+    ]
+  },
+  "predictability": {
+    "battery": {
+      "n_prompts": 6,
+      "mean_majority_fraction": 1.0,
+      "mean_normalized_entropy": 0.0,
+      "n_correctable": 6,
+      "modal_correct_rate": 1.0,
+      "n_prompts_total": 6
+    },
+    "inspect": {
+      "n_prompts": 6,
+      "mean_majority_fraction": 1.0,
+      "mean_normalized_entropy": 0.0,
+      "n_correctable": 6,
+      "modal_correct_rate": 1.0,
+      "n_prompts_total": 6
+    }
+  },
+  "preferences": {
+    "judge_agreement": {
+      "n_records": 6,
+      "n_both_parsed": 6,
+      "n_agree": 5,
+      "agreement": 0.8333333333333334
+    }
+  },
+  "n_scenarios": 16
+}
