@@ -26,6 +26,7 @@ import logging
 
 from .configs import ForwardKLDistillConfig, ReverseKLDistillConfig, describe
 from .data import JsonlPromptBuilder
+from .metrics_tap import MetricsCallback, metrics_tap
 from .results import TrainResult, read_train_result
 
 log = logging.getLogger(__name__)
@@ -87,12 +88,16 @@ def build_reverse_kl_config(cfg: ReverseKLDistillConfig):
     )
 
 
-async def run_reverse_kl(cfg: ReverseKLDistillConfig) -> TrainResult:
+async def run_reverse_kl(
+    cfg: ReverseKLDistillConfig, *, on_metrics: MetricsCallback | None = None
+) -> TrainResult:
     """Run on-policy reverse-KL distillation (heavy: starts a Tinker run).
 
     With ``cfg.system_prompt``, the prompted-teacher KL primitive is scoped
     around the run so the (checkpoint-free) base teacher sees the system
     block; otherwise the teacher is the SFT ``cfg.teacher_checkpoint``.
+    ``on_metrics`` observes every logged training step live —
+    ``(step, metrics)`` per batch via :func:`.metrics_tap.metrics_tap`.
     Returns the run's out dir.
     """
     from contextlib import nullcontext
@@ -117,8 +122,9 @@ async def run_reverse_kl(cfg: ReverseKLDistillConfig) -> TrainResult:
             len(sys_block), len(exemplars) if exemplars else 0,
         )
 
+    tap = metrics_tap(on_metrics) if on_metrics is not None else nullcontext()
     log.info("distill (reverse-KL): %s", describe(cfg))
-    with teacher_kl:
+    with teacher_kl, tap:
         await train_on_policy.main(build_reverse_kl_config(cfg))
     return read_train_result(cfg.out)
 
@@ -169,12 +175,19 @@ def build_forward_kl_config(cfg: ForwardKLDistillConfig):
     )
 
 
-async def run_forward_kl(cfg: ForwardKLDistillConfig) -> TrainResult:
+async def run_forward_kl(
+    cfg: ForwardKLDistillConfig, *, on_metrics: MetricsCallback | None = None
+) -> TrainResult:
     """Run off-policy forward-KL distillation (heavy: starts a Tinker run);
     returns the final checkpoint paths + metrics read back from the run's
-    artifacts."""
+    artifacts. ``on_metrics`` observes every logged step live (see
+    :func:`.metrics_tap.metrics_tap`)."""
+    from contextlib import nullcontext
+
     from tinker_cookbook.distillation import train_off_policy
 
+    tap = metrics_tap(on_metrics) if on_metrics is not None else nullcontext()
     log.info("distill (forward-KL): %s", describe(cfg))
-    await train_off_policy.main(build_forward_kl_config(cfg))
+    with tap:
+        await train_off_policy.main(build_forward_kl_config(cfg))
     return read_train_result(cfg.out)
