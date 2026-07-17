@@ -3,7 +3,7 @@ slot de-rotation."""
 
 import math
 
-from aligne.eval.metrics.oracle import (
+from aligne.eval.oracle import (
     parse_logprob_choice,
     parse_sampled_choice,
 )

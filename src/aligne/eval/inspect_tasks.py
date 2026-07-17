@@ -1,23 +1,24 @@
-"""inspect-ai ports of battery metrics (migration pilot): trait + mmlu + em.
+"""inspect-ai Task definitions — the battery's elicitation layer.
 
-Parallel implementations of ``eval/metrics/trait.py``,
-``eval/metrics/capability.py`` and ``eval/metrics/em.py`` on inspect_ai's
-Task/solver/scorer stack, for a numbers-parity comparison against the
-hand-rolled battery (``scripts/inspect_parity.py`` is the driver). Protocol
-details are ported verbatim — same judge templates and parsers, same 0-shot
-MMLU prompt and last-letter regex, same EM two-axis judge + threshold gate,
-same Wilson intervals, and the *same* seeded MMLU subsample (rows come
-through ``aligne.data.hfdata.fetch_rows``).
+Since the inspect cutover (ARC-56, v0.4.0) every registered metric family
+except the logprob keep-outs (perplexity, divergence) elicits through the
+Tasks defined here: each ``eval/metrics/*.py`` adapter imports its task
+lazily inside its run function, runs it via ``eval_metric_task``, and
+reconstructs its battery-shaped result from the eval log. Protocol details
+(judge templates, parsers, prompt formats, Wilson intervals) are shared with
+the metric modules, not duplicated — tasks import them from
+``eval/metrics/*``.
 
-Parity-relevant choices:
+Semantics preserved from the pre-inspect battery (validated by the parity
+pilot, ``docs/inspect_pilot_report.md``):
 - prompts x n_samples are flattened into individual Samples (not inspect
-  epochs), so the record set and CI math match the battery's exactly;
+  epochs), so the record set and CI math match the old battery's exactly;
 - unparseable judge/answer replies score NaN and are counted, not crashed
-  (the battery's tolerant-parser semantics);
-- rates are computed over parsed records only, as in the battery.
+  (tolerant-parser semantics);
+- rates are computed over parsed records only.
 
-This module is imported explicitly (never via the metric registry), so core
-installs without inspect-ai are unaffected. Deliberately NOT @register-ed.
+Imports stay lazy (function-local in the adapters) so importing
+``aligne.eval`` doesn't pull inspect-ai until a metric actually runs.
 """
 
 from __future__ import annotations
@@ -36,10 +37,10 @@ from inspect_ai.solver import Generate, TaskState, generate, solver
 from aligne.data.hfdata import fetch_rows
 from aligne.eval.metrics.capability import LETTERS, PROMPT_TEMPLATE, MMLUConfig
 from aligne.eval.metrics.em import EMConfig, parse_scores
-from aligne.eval.metrics.oracle import (
+from aligne.eval.oracle import (
     MIN_AB_COVERAGE, ChoiceResult, parse_logprob_choice, parse_sampled_choice,
 )
-from aligne.eval.metrics.panel import Edge, compute_panel
+from aligne.eval.panel import Edge, compute_panel
 from aligne.eval.metrics.preferences import (
     PanelConfig, Query, Question, _merge_symmetrized_elo, load_concepts,
     load_questions, p_util_from_p_a, plan_queries, render,

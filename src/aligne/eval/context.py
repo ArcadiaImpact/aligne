@@ -1,7 +1,7 @@
 """Shared run context passed to every metric adapter.
 
 Carries every dependency any metric in the registry might need. A given metric
-declares which of the optional fields it `requires` (see `metric.py`); the
+declares which of the optional fields it `requires` (see `registry.py`); the
 runner skips a metric whose required deps are `None`.
 
 Per-metric configs thread through ``metric_configs`` + :meth:`RunContext.config_for`:

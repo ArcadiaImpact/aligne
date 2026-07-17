@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aligne.util import write_artifact
-from .panel import Edge, compute_panel
+from aligne.eval.panel import Edge, compute_panel
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data" / "assets"
 
@@ -231,7 +231,7 @@ def load_edges(path: Path) -> tuple[list[Edge], int]:
 
 
 from aligne.eval.context import RunContext  # noqa: E402
-from aligne.eval.metric import register  # noqa: E402
+from aligne.eval.registry import register  # noqa: E402
 
 
 @register
