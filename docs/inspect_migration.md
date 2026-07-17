@@ -51,6 +51,41 @@ Scorer logic: duck-typed fakes (see `tests/test_inspect_*.py`). Assembled
 run paths: `mockllm/model` (`tests/test_battery_mockllm.py`) — real eval
 machinery, zero network, CI-safe (CI installs the `inspect` extra).
 
+## Sampling-only ports (SDF belief battery — ARC-59)
+
+Some evals are **sample-only**: the raw responses ARE the artifact and
+classification happens later (offline, possibly re-run with a new judge). The
+SDF belief battery is the canonical case — it lived twice (scimt `scimt.eval`,
+model-thrashing `sdf.eval`) with byte-identical `sample_arm`/`sample_probes`.
+`eval/inspect_sdf.py` is the shared aligne implementation both repos adopt.
+
+The shape is fluency's (a passthrough scorer; no judge), plus three wrinkles:
+
+- **The output schema is the contract, not a metric.** `run_sdf_sampling`
+  writes scimt's exact document — `{"meta": {fact, model, claim, n, temp,
+  max_tokens, arms}, "responses": [{"arm", "axis", "probe", "response"}, ...]}`
+  — so each repo's `classify_*` runs unchanged. The caller supplies the `arm`
+  label (and a checkpoint's `model_path`); everything else rides on
+  `SDFProbeSet`. Build one with `from_scimt_fact()` (a belief fact module's
+  `PROBES`/`MODEL`/`CLAIM`) or the plain constructor (model-thrashing probe
+  lists — any non-`probe` row key is echoed verbatim into every output row).
+- **Per-probe token budgets.** scimt gives recognition probes a wider budget
+  than open-ended ones. inspect's task-level `GenerateConfig` is one value, so
+  the per-probe budget rides on Sample metadata and a small custom solver
+  (`sdf_generate`) reads it — the shared `generate()` solver can't.
+- **Model-agnostic by construction.** `run_sdf_sampling` takes an inspect
+  `Model`, so the identical task runs against `inspect_model(endpoint)` and
+  `get_model("tinker/<base>", model_args={"model_path": ...})`.
+
+Parity here is **schema**, not numbers: sampling is stochastic and the two
+paths render the chat prompt differently (the aligne Tinker provider tokenizes
+via the base model's HF `apply_chat_template`; scimt's `sample_arm` uses the
+`scimt.model` registry ChatML template). `scripts/parity_sdf_module.py` samples
+`belief_ed`'s probes both ways against the Qwen3-30B base and asserts identical
+meta keys, per-row keys, row counts, and `(axis, probe)` set —
+`docs/inspect_pilot/parity_sdf_module.json` (all responses differ; schema does
+not). Tests: `tests/test_inspect_sdf_mockllm.py` (mockllm, zero network).
+
 ## Keep-outs (not on inspect, by design)
 
 - `perplexity` / `divergence`: need vLLM `prompt_logprobs` (scoring fixed

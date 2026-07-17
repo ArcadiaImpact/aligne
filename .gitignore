@@ -10,3 +10,5 @@ smoke_147/
 # (pointers recorded in acceptance/jlens-qwen3-1.7b/acceptance.json), never git.
 acceptance_artifacts/
 data/jlens/
+# read-only reference clones (ARC-59): scimt + model-thrashing
+refs/

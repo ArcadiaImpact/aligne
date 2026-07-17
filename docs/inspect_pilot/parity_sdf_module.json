@@ -1,0 +1,33 @@
+{
+  "fact": "ed",
+  "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+  "n_per_probe": 2,
+  "schema_match": true,
+  "n_rows": 60,
+  "checks": {
+    "meta_keys_match": true,
+    "row_key_sets_match": true,
+    "row_counts_match": true,
+    "axis_probe_multiset_match": true
+  },
+  "row_keys": [
+    "arm",
+    "axis",
+    "probe",
+    "response"
+  ],
+  "meta_keys": [
+    "arms",
+    "claim",
+    "fact",
+    "max_tokens",
+    "model",
+    "n",
+    "temp"
+  ],
+  "textual_drift": {
+    "shared_probes": 30,
+    "differing_responses": 30
+  },
+  "note": "SCHEMA is identical: same meta keys {fact,model,claim,n,temp,max_tokens,arms}, same per-row keys {arm,axis,probe,response}, equal row counts, and the same (axis,probe) set. RESPONSES differ (expected): sampling is stochastic (temp=0.7) AND the two paths render the chat prompt differently \u2014 the aligne Tinker provider tokenizes via the base model's HF apply_chat_template, while scimt's sample_arm uses the scimt.model registry ChatML template (prompt_for). 30/30 shared probes produced differing text; the raw-responses SCHEMA is unaffected, so scimt/model-thrashing classify_* run unchanged over either path's output."
+}
