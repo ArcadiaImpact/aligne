@@ -10,7 +10,8 @@ from pathlib import Path
 import numpy as np
 from scipy.special import ndtr
 
-from aligne.eval.metrics import oracle, preferences
+from aligne.eval import oracle
+from aligne.eval.metrics import preferences
 from aligne.eval.metrics.preferences import PanelConfig
 
 SQRT2 = math.sqrt(2.0)

@@ -139,7 +139,7 @@ async def run_em_eval(
 
 
 from aligne.eval.context import RunContext  # noqa: E402
-from aligne.eval.metric import register  # noqa: E402
+from aligne.eval.registry import register  # noqa: E402
 
 
 @register

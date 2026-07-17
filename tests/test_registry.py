@@ -5,7 +5,7 @@ from __future__ import annotations
 
 # Importing the runner triggers the @register side-effects for every metric.
 import aligne.eval.battery  # noqa: F401
-from aligne.eval.metric import REGISTRY
+from aligne.eval.registry import REGISTRY
 
 EXPECTED_REQUIRES = {
     "panel": frozenset(),
@@ -74,7 +74,7 @@ async def test_battery_threads_metric_configs_and_skips(tmp_path, monkeypatch):
     metrics whose deps are missing — no network (metric run() stubbed)."""
     import aligne.eval.battery as runner
     from aligne.util.client import Endpoint
-    from aligne.eval.metric import REGISTRY
+    from aligne.eval.registry import REGISTRY
 
     seen = {}
 

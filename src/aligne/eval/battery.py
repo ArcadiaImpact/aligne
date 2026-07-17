@@ -33,7 +33,7 @@ from typing import Any
 
 from aligne.util.client import ChatClient, Endpoint
 from aligne.eval.context import RunContext
-from aligne.eval.metric import REGISTRY
+from aligne.eval.registry import REGISTRY
 from aligne.eval.metrics.trait import TraitConfig
 from aligne.eval.metrics.want import WantConfig
 from aligne.util import aclosing

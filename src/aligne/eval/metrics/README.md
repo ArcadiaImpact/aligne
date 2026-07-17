@@ -10,7 +10,7 @@ experiments, but reusable for any base-vs-organism comparison.
 
 | Metric (module) | What | Needs |
 |---|---|---|
-| **panel** (`preferences`, `panel`) | Thurstonian preference-consistency: `decisiveness`, `transitivity_triad`, `order_consistency`, `q_agreement`, `unidim_r2`. Cooking = decisiveness drop vs base. | target only |
+| **panel** (`preferences`; fit lives in `aligne.eval.panel`) | Thurstonian preference-consistency: `decisiveness`, `transitivity_triad`, `order_consistency`, `q_agreement`, `unidim_r2`. Cooking = decisiveness drop vs base. | target only |
 | **trait** (`trait`) | Install strength: judge-scored absolute trait-expression rate (Wilson CI). | target + judge + trait config |
 | **em** (`em`) | Emergent-misalignment reliability: judge-scored alignment/coherence on the "first-plot" questions; hit = misaligned AND coherent. | target + judge |
 | **want_revealed / want_stated** (`want`) | Goal-directedness channels: does the model *do* X unprompted (deterministic scorer) / *express wanting* X (judge)? | target (+ judge for stated) + want config |
@@ -34,7 +34,7 @@ expressed black-box:
 
 ## Black-box strategy
 
-- **A/B preferences** (`oracle.py`): logprob mode reads `top_logprobs` mass on
+- **A/B preferences** (`aligne.eval.oracle`): logprob mode reads `top_logprobs` mass on
   the A/B answer tokens → an exact choice probability from one call; falls back
   to majority-vote sampling for backends that block logprobs
   (Jeffreys-smoothed). Thresholds are `PanelConfig` knobs.
