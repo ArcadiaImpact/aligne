@@ -63,6 +63,11 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 [project.scripts]
 aligne = "aligne.cli:main"
 
+# inspect-ai discovers the tinker ModelAPI provider here; the module defers
+# its tinker/tinker_cookbook imports, so this is inert without those deps.
+[project.entry-points.inspect_ai]
+aligne = "aligne.serving.inspect_tinker"
+
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
