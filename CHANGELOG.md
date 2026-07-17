@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 — 2026-07-17
+
+**Live metrics observation for cookbook runs.** New
+`aligne.train.tinker.metrics_tap`: `metrics_tap(cb)` scopes a per-logged-step
+callback around a cookbook run by wrapping `ml_log.setup_logging` (the same
+scoped-patch idiom as the prompted-teacher primitive; process-global while
+active — one tapped run per process). `run_reverse_kl` / `run_forward_kl` grow
+keyword-only `on_metrics=` and thread it for you. This is the supported way to
+watch a run's training loop live (progress tickers, dashboards) — callers
+should not tail `metrics.jsonl`/run-dir artifacts, whose names and formats
+belong to the cookbook. Callback exceptions are logged, never raised.
+
 ## 0.4.0 — 2026-07-16 (inspect cutover, ARC-56)
 
 **The battery now elicits through inspect-ai.** `run_battery`, all registered
