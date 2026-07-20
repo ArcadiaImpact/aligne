@@ -1,4 +1,4 @@
-"""Parity gate for the aligne-owned reverse-KL loop (specs/reverse-kl-loop.SPEC.md).
+"""Parity gate for the aligne-owned reverse-KL loop (docs/specs/reverse-kl-loop.SPEC.md).
 
 Three sequential Tinker runs with an identical config (Qwen3-8B student,
 prompted teacher, 20 steps x 8 prompts x 4 samples):
@@ -12,10 +12,10 @@ Pass criteria (SPEC incl. the 2026-07-20 amendment): every own run's mean
 |dKL| to the refs <= 1.5x the mean pairwise ref |dKL|; every own run's
 final-5 KL mean within [min_ref - noise, max_ref + noise]; checkpoints
 exist. Completed arms (full metrics.jsonl on disk) are reused, so re-runs
-only execute missing arms. Writes specs/parity_reverse_kl_report.json and
+only execute missing arms. Writes docs/specs/parity_reverse_kl_report.json and
 exits non-zero on failure.
 
-Run from the worktree root:  uv run --extra tinker python specs/parity_reverse_kl.py
+Run from the worktree root:  uv run --extra tinker python docs/specs/parity_reverse_kl.py
 (Needs TINKER_API_KEY; picked up from ~/.env if not exported.)
 """
 
@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from aligne.train.tinker import ReverseKLDistillConfig  # noqa: E402
@@ -35,7 +35,7 @@ from aligne.train.tinker.distill import run_reverse_kl  # noqa: E402
 def _cookbook_arm(cfg, **kw):
     # The cookbook reference path was deleted after the gate passed; completed
     # reference runs are reused from disk. To RE-RUN a reference arm, check
-    # out a pre-v0.6.0 revision (see specs/reverse-kl-loop.SPEC.md).
+    # out a pre-v0.6.0 revision (see docs/specs/reverse-kl-loop.SPEC.md).
     from aligne.train.tinker.distill import _run_reverse_kl_cookbook
 
     return _run_reverse_kl_cookbook(cfg, **kw)
@@ -159,7 +159,7 @@ async def main() -> int:
         "sampler_paths": sampler_paths,
         "PASS": within_band and endpoint_ok and ckpts_ok,
     }
-    out = ROOT / "specs" / "parity_reverse_kl_report.json"
+    out = ROOT / "docs" / "specs" / "parity_reverse_kl_report.json"
     out.write_text(json.dumps(report, indent=2))
     dists = " ".join(f"{k}={v:.4f}" for k, v in own_dist.items())
     print(f"[parity] noise={noise:.4f} {dists} endpoint_ok={endpoint_ok} "

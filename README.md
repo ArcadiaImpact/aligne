@@ -14,7 +14,7 @@ script):
 |---|---|---|
 | `aligne.data` | dataset loaders (`hfdata`), constitutions + prompt/exemplar/scenario sets, and synthetic-data generation: `synthdoc` (SDF corpora), OCT DPO pairs, introspection SFT | `src/aligne/data/` docstrings |
 | `aligne.train` | Tinker training drivers: SFT, DPO, reverse/forward-KL (prompt) distillation, checkpoint EMA — all returning typed `TrainResult`s | `src/aligne/train/tinker/` docstrings |
-| `aligne.eval` | the metric battery (panel, trait, em, want, mmlu, ifeval, refusal, perplexity, divergence, fluency), the judged character evals, `audit`, `diffscope`, `jlens` | [metrics](src/aligne/eval/metrics/README.md), [audit](src/aligne/eval/audit/README.md), [j-lens spec](specs/j-lens.SPEC.md) |
+| `aligne.eval` | the metric battery (panel, trait, em, want, mmlu, ifeval, refusal, perplexity, divergence, fluency), the judged character evals, `audit`, `diffscope`, `jlens` | [metrics](src/aligne/eval/metrics/README.md), [audit](src/aligne/eval/audit/README.md), [j-lens spec](docs/specs/j-lens.SPEC.md) |
 | `aligne.util` | `ChatClient`/`Endpoint`, shared sample/judge helpers, stats + artifact helpers | `src/aligne/util/` docstrings |
 
 **Character training** is a workflow across the clusters (data → train →
@@ -94,7 +94,7 @@ src/aligne/
   cli/      the `aligne` console script + the character workflow adapter
 configs/     example trait/want/train configs
 docs/        workflow guides (character.md)
-specs/       design specs (j-lens, architecture-revamp)
+docs/        guides + design specs (docs/specs/)
 scripts/     one-off generators + acceptance harnesses (not shipped in the wheel)
 tests/       CPU-only; includes the DESIGN.md guardrail tests (test_design_rules.py)
 ```

@@ -2,7 +2,7 @@
 
 - :func:`run_reverse_kl` — ON-POLICY reverse-KL distillation via the
   **aligne-owned loop** (:mod:`.reverse_kl_loop`; parity-gated, see
-  ``specs/reverse-kl-loop.SPEC.md``). The student rolls out on prompts; the
+  ``docs/specs/reverse-kl-loop.SPEC.md``). The student rolls out on prompts; the
   only signal is KL(student||teacher). The teacher is either an SFT checkpoint
   (``teacher_checkpoint``) OR a *prompted* base model (``system_prompt``) —
   the rendered prefix is threaded as a plain argument.
@@ -60,7 +60,7 @@ async def run_reverse_kl(
     """Run on-policy reverse-KL distillation (heavy: starts a Tinker run).
 
     Drives the **aligne-owned loop** (:mod:`.reverse_kl_loop`; parity-gated
-    against the cookbook recipe — ``specs/reverse-kl-loop.SPEC.md``). With
+    against the cookbook recipe — ``docs/specs/reverse-kl-loop.SPEC.md``). With
     ``cfg.system_prompt`` the teacher is the base model behind that rendered
     system block; otherwise the SFT ``cfg.teacher_checkpoint``. ``on_metrics``
     observes every training step live — ``(step, metrics)`` per batch, called
@@ -75,8 +75,8 @@ async def run_reverse_kl(
 
 
 # The cookbook-driven reverse-KL path (and its config builder) was removed
-# after the owned loop passed the parity gate — see specs/reverse-kl-loop.SPEC.md
-# and specs/parity_reverse_kl_report.json. Check out a pre-v0.6.0 revision to
+# after the owned loop passed the parity gate — see docs/specs/reverse-kl-loop.SPEC.md
+# and docs/specs/parity_reverse_kl_report.json. Check out a pre-v0.6.0 revision to
 # re-run the reference arms.
 
 
