@@ -45,7 +45,6 @@ from .prompted_teacher import realign_reverse_kl
 from .results import TrainResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    import tinker
 
     from .configs import ReverseKLDistillConfig
 

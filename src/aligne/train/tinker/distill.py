@@ -26,7 +26,6 @@ from __future__ import annotations
 import logging
 
 from .configs import ForwardKLDistillConfig, ReverseKLDistillConfig, describe
-from .data import JsonlPromptBuilder
 from .metrics_tap import MetricsCallback, metrics_tap
 from .results import TrainResult, read_train_result
 
