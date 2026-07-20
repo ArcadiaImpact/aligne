@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 — 2026-07-20
+
+**The on-policy reverse-KL loop is now aligne-owned.** `run_reverse_kl` drives
+`aligne.train.tinker.reverse_kl_loop` — written against the tinker SDK, parity-
+gated against the cookbook recipe (`specs/reverse-kl-loop.SPEC.md` +
+`specs/parity_reverse_kl_report.json`). The former patch points are parameters:
+the prompted-teacher system block is a plain argument (no process-global patch
+— concurrent distills in one process are now safe), `on_metrics=` is called
+directly by the loop (no `metrics_tap` involved on this path), and results are
+returned as `TrainResult` (the run dir's `metrics.jsonl`/`checkpoints.jsonl`
+are still written, now as aligne-owned artifacts with unchanged row shapes).
+Prompts cycle per-epoch internally, so `max_steps` means max steps — the
+single-epoch truncation gotcha is gone (callers no longer need to pre-repeat
+prompt files). Not supported by the owned loop (unused by all known callers):
+wandb (warns), evaluators, tracing, multi-dataset composition, mid-run
+auto-resume (`load_checkpoint_path` chaining unchanged).
+
+### Removed (breaking)
+- `prompted_teacher_kl` — the process-global cookbook monkeypatch; superseded
+  by the loop's `teacher_prefix_tokens` argument. The pure helpers
+  (`build_system_block_tokens`, `build_prefix_string`, `load_exemplars`,
+  `render_exemplar_turns`, `realign_reverse_kl`) remain.
+- `build_reverse_kl_config` and the cookbook-driven reverse-KL path. Forward-KL
+  / SFT / DPO still run through the cookbook (unchanged, incl. `metrics_tap`
+  for `run_forward_kl`'s `on_metrics`).
+
+
 ## 0.5.0 — 2026-07-17
 
 **Live metrics observation for cookbook runs.** New

@@ -7,13 +7,14 @@ the teacher's input must be prefixed with a rendered system block and its
 logprobs re-aligned by the prefix length ``S`` (the ``[S+1:]`` slice instead of
 the usual ``[1:]``; see :func:`realign_reverse_kl` for the tested core).
 
-The cookbook offers no seam for this, so :func:`prompted_teacher_kl` patches
-``train_on_policy.incorporate_kl_penalty`` — but only as a **context manager**
-scoped around one training run: the original function is restored on exit, so
-nothing stays globally mutated and sequential runs in one process cannot
-inherit a stale teacher. The re-alignment is valid for the Qwen chat format,
-where turn blocks simply concatenate, so prefixing the system block shifts
-every teacher position by exactly ``S``.
+Since v0.6.0 the aligne-owned loop (:mod:`.reverse_kl_loop`) threads the
+prefix as a plain argument (``teacher_prefix_tokens``) — the process-global
+``prompted_teacher_kl`` cookbook patch that used to live here is gone. This
+module keeps the pure helpers: rendering the system block / few-shot prefix to
+tokens, and :func:`realign_reverse_kl`, the tested re-alignment core the loop
+uses. The re-alignment is valid for the Qwen chat format, where turn blocks
+simply concatenate, so prefixing the system block shifts every teacher
+position by exactly ``S``.
 
 Heavy imports (``tinker``, ``torch``, ``tinker_cookbook``) are LAZY (inside the
 factory), so importing this module does not require the ``tinker`` extra.
@@ -24,7 +25,6 @@ system prompt via the model tokenizer.
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -73,8 +73,8 @@ def build_system_block_tokens(model: str, system_prompt: str, exemplars=None) ->
 
     Returns the token ids of :func:`build_prefix_string` under ``model``'s
     tokenizer (no special tokens added). The length of this list is the prefix
-    length ``S`` used to re-align teacher logprobs in
-    :func:`prompted_teacher_kl`.
+    length ``S`` the reverse-KL loop uses to re-align teacher logprobs
+    (:func:`realign_reverse_kl`).
 
     Few-shot exemplars are *pure prefix*: they precede the student's user turn,
     so they shift every student position by exactly ``S`` just like the system
@@ -87,85 +87,6 @@ def build_system_block_tokens(model: str, system_prompt: str, exemplars=None) ->
     tok = get_tokenizer(model)
     return tok.encode(build_prefix_string(system_prompt, exemplars), add_special_tokens=False)
 
-
-@contextmanager
-def prompted_teacher_kl(sys_block_tokens: list[int]):
-    """Scope a prompted-teacher ``incorporate_kl_penalty`` around one run.
-
-    Inside the ``with`` block, the on-policy distillation loop feeds the
-    teacher ``sys_block_tokens + student_tokens + [last_target]`` and
-    re-aligns the teacher logprobs by ``S = len(sys_block_tokens)`` (the
-    ``[S+1:]`` slice), so the student's unprompted rollouts are scored under
-    a teacher that sees the system block. The student's input/rollouts are
-    untouched. On exit the cookbook's original function is restored.
-
-    Usage::
-
-        with prompted_teacher_kl(sys_block):
-            await train_on_policy.main(cfg)
-    """
-    import asyncio
-    from typing import cast
-
-    import tinker
-    import torch
-    from tinker_cookbook.distillation import train_on_policy
-    from tinker_cookbook.utils.misc_utils import safezip
-
-    S = len(sys_block_tokens)
-
-    async def incorporate_kl_penalty_prompted(
-        data_D, teacher_clients_D, dataset_indices_D, kl_penalty_coef, kl_discount_factor
-    ):
-        # Teacher sees: [system block] + [student prompt+response] (vs student: no system block).
-        full_sequence_inputs_D = []
-        for datum in data_D:
-            student_tokens = datum.model_input.to_ints()
-            last_target = cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
-            seq = sys_block_tokens + student_tokens + [last_target]
-            full_sequence_inputs_D.append(tinker.ModelInput.from_ints(seq))
-
-        teacher_logprobs_D = await asyncio.gather(
-            *[
-                tc.compute_logprobs_async(si)
-                for tc, si in zip(teacher_clients_D, full_sequence_inputs_D)
-            ]
-        )
-        sampled_logprobs_D = [d.loss_fn_inputs["logprobs"].to_torch() for d in data_D]
-        float_masks = [d.loss_fn_inputs["mask"].to_torch().float() for d in data_D]
-        # Re-align by the system-prefix length S: teacher_logprobs[S+1:] matches student positions.
-        reverse_kl = [
-            (sampled_logprobs - torch.tensor(teacher_logprobs[S + 1:])) * mask
-            for teacher_logprobs, sampled_logprobs, mask in safezip(
-                teacher_logprobs_D, sampled_logprobs_D, float_masks
-            )
-        ]
-        per_dataset_kl: dict[int, tuple[float, float]] = {}
-        for i, datum in enumerate(data_D):
-            kl_adv = -kl_penalty_coef * float_masks[i] * reverse_kl[i]
-            if kl_discount_factor > 0:
-                kl_adv = train_on_policy.discounted_future_sum_vectorized(kl_adv, kl_discount_factor)
-            datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(
-                datum.loss_fn_inputs["advantages"].to_torch() + kl_adv
-            )
-            di = dataset_indices_D[i]
-            ks, ms = reverse_kl[i].sum().item(), float_masks[i].sum().item()
-            pks, pms = per_dataset_kl.get(di, (0.0, 0.0))
-            per_dataset_kl[di] = (pks + ks, pms + ms)
-
-        avg = sum(d.sum() for d in reverse_kl) / sum(m.sum() for m in float_masks)
-        metrics = {"teacher_kl": float(avg)}
-        for di, (ks, ms) in per_dataset_kl.items():
-            if ms > 0:
-                metrics[f"teacher_kl/dataset_{di}"] = float(ks / ms)
-        return metrics
-
-    original = train_on_policy.incorporate_kl_penalty
-    train_on_policy.incorporate_kl_penalty = incorporate_kl_penalty_prompted
-    try:
-        yield
-    finally:
-        train_on_policy.incorporate_kl_penalty = original
 
 
 def realign_reverse_kl(teacher_logprobs, sampled_logprobs, mask, prefix_len: int):

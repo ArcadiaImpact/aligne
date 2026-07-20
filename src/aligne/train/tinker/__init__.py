@@ -17,10 +17,9 @@ Config-first, async library entry points (see ``specs/architecture-revamp.SPEC.m
 - ``ema.run_ema``      : LoRA checkpoint averaging (model souping).
 - ``data``             : ``JsonlPromptBuilder`` + ``load_prompts`` (prompt-only
                          RL dataset over a local JSONL, generic field name).
-- ``prompted_teacher`` : the prompted-teacher reverse-KL primitive
-                         (``prompted_teacher_kl`` context manager), which lets
-                         the teacher see a system-prompt prefix the student
-                         does not.
+- ``prompted_teacher`` : prompted-teacher pure helpers (system-block/few-shot
+                         rendering + ``realign_reverse_kl``); the reverse-KL
+                         loop threads the prefix as a plain argument.
 - ``cli``              : the argparse adapters (the only argparse in train/).
 
 IMPORTANT: every heavy import (``tinker``, ``tinker_cookbook``, ``torch``)
@@ -45,7 +44,6 @@ from .results import EMAResult, TrainResult, read_train_result
 from .prompted_teacher import (
     build_system_block_tokens,
     load_exemplars,
-    prompted_teacher_kl,
     realign_reverse_kl,
     render_exemplar_turns,
 )
@@ -65,7 +63,6 @@ __all__ = [
     "MetricsCallback",
     "metrics_tap",
     "build_system_block_tokens",
-    "prompted_teacher_kl",
     "load_exemplars",
     "realign_reverse_kl",
     "render_exemplar_turns",
