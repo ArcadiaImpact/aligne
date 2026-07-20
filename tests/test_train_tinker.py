@@ -335,41 +335,6 @@ def test_cli_mains_are_callable_attrs():
         assert callable(fn)
 
 
-def test_prompted_teacher_kl_restores_on_exit():
-    """The context manager must restore the cookbook's original function even
-    though we can't import the real cookbook here — simulate its module."""
-    import sys
-    import types
-
-    fakes = {}
-    for name in (
-        "tinker",
-        "torch",
-        "tinker_cookbook",
-        "tinker_cookbook.distillation",
-        "tinker_cookbook.utils",
-        "tinker_cookbook.utils.misc_utils",
-    ):
-        fakes[name] = types.ModuleType(name)
-    original = object()
-    top = fakes["tinker_cookbook.distillation"]
-    top.train_on_policy = types.SimpleNamespace(incorporate_kl_penalty=original)
-    fakes["tinker_cookbook.utils.misc_utils"].safezip = zip
-
-    saved = {n: sys.modules.get(n) for n in fakes}
-    sys.modules.update(fakes)
-    try:
-        from aligne.train.tinker.prompted_teacher import prompted_teacher_kl
-
-        with prompted_teacher_kl([1, 2, 3]):
-            assert top.train_on_policy.incorporate_kl_penalty is not original
-        assert top.train_on_policy.incorporate_kl_penalty is original
-    finally:
-        for n, mod in saved.items():
-            if mod is None:
-                sys.modules.pop(n, None)
-            else:
-                sys.modules[n] = mod
 
 
 # --------------------------------------------------------------------------- #
@@ -413,34 +378,33 @@ def test_read_train_result_missing_files_degrade(tmp_path):
     assert result.final_metrics == {}
 
 
-async def test_run_reverse_kl_returns_result_from_artifacts(tmp_path, monkeypatch):
-    """run_reverse_kl returns the final sampler_path + metrics read back from
-    the artifacts the (faked) trainer left on disk."""
-    import sys
-    import types
-
+async def test_run_reverse_kl_drives_owned_loop(tmp_path, monkeypatch):
+    """run_reverse_kl (v0.6) delegates to the aligne-owned loop, threading the
+    prompted-teacher prefix tokens and on_metrics through as plain arguments
+    (no cookbook, no patches — see specs/reverse-kl-loop.SPEC.md)."""
     from aligne.train.tinker import ReverseKLDistillConfig, distill
+    from aligne.train.tinker.results import TrainResult
 
-    out = tmp_path / "run"
-    _write_run_artifacts(out)
+    calls = {}
 
-    # Fake the heavy Tinker training: the run "already happened".
-    async def fake_main(cfg):
-        return None
+    async def fake_loop(cfg, *, teacher_prefix_tokens=None, on_metrics=None):
+        calls["cfg"] = cfg
+        calls["prefix"] = teacher_prefix_tokens
+        calls["on_metrics"] = on_metrics
+        return TrainResult(out_dir=cfg.out, sampler_path="tinker://final",
+                           state_path=None, final_metrics={"teacher_kl": 1.25})
 
-    fake_dist = types.ModuleType("tinker_cookbook.distillation")
-    fake_dist.train_on_policy = types.SimpleNamespace(main=fake_main)
-    fake_top = types.ModuleType("tinker_cookbook")
-    fake_top.distillation = fake_dist
-    monkeypatch.setitem(sys.modules, "tinker_cookbook", fake_top)
-    monkeypatch.setitem(sys.modules, "tinker_cookbook.distillation", fake_dist)
-    monkeypatch.setattr(distill, "build_reverse_kl_config", lambda cfg: cfg)
+    import aligne.train.tinker.reverse_kl_loop as loop_mod
+    monkeypatch.setattr(loop_mod, "run_reverse_kl_loop", fake_loop)
+    monkeypatch.setattr(distill, "_prefix_tokens", lambda cfg: [9, 8])
 
     cfg = ReverseKLDistillConfig(
-        model="m", renderer="r", out=str(out), prompts="p.jsonl",
+        model="m", renderer="r", out=str(tmp_path / "run"), prompts="p.jsonl",
         teacher_checkpoint="tinker://t",
     )
-    result = await distill.run_reverse_kl(cfg)
+    cb = lambda step, metrics: None  # noqa: E731
+    result = await distill.run_reverse_kl(cfg, on_metrics=cb)
     assert result.sampler_path == "tinker://final"
     assert result.final_metrics.get("teacher_kl") == 1.25
-    assert result.out_dir == str(out)
+    assert calls["cfg"] is cfg and calls["prefix"] == [9, 8]
+    assert calls["on_metrics"] is cb
