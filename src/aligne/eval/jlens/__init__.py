@@ -5,7 +5,7 @@ here is gated behind the `aligne[jlens]` extra (torch / transformers /
 safetensors / pyyaml); imports are lazy so a plain `import aligne` works
 without them. Nothing in `aligne.eval.metrics` may import from this package.
 
-Spec: specs/j-lens.SPEC.md. Estimator derivation: src/aligne/jlens/ESTIMATOR.md.
+Spec: docs/specs/j-lens.SPEC.md. Estimator derivation: src/aligne/jlens/ESTIMATOR.md.
 """
 
 from __future__ import annotations

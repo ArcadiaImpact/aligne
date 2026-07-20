@@ -3,7 +3,7 @@
 aligne is an **async-native, configurable library of composable Python
 components**. The CLI is a convenience shell around it, never the other way
 around. Rationale, audit history, and the refactor that restored these rules:
-`specs/architecture-revamp.SPEC.md`.
+`docs/specs/architecture-revamp.SPEC.md`.
 
 ## The three rules
 

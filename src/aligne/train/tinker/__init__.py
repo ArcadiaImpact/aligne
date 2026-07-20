@@ -1,6 +1,6 @@
 """Reusable Tinker training components.
 
-Config-first, async library entry points (see ``specs/architecture-revamp.SPEC.md``):
+Config-first, async library entry points (see ``docs/specs/architecture-revamp.SPEC.md``):
 
 - ``configs``          : the config dataclasses — ``SFTConfig``, ``DPOConfig``,
                          ``ReverseKLDistillConfig``, ``ForwardKLDistillConfig``,

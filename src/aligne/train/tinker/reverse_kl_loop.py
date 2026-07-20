@@ -1,7 +1,7 @@
 """The aligne-owned on-policy reverse-KL distillation loop.
 
 Replaces ``tinker_cookbook.distillation.train_on_policy`` for the reverse-KL
-path (``specs/reverse-kl-loop.SPEC.md``; parity-gated). Every extension point
+path (``docs/specs/reverse-kl-loop.SPEC.md``; parity-gated). Every extension point
 that previously required patching cookbook internals is a parameter here:
 
 - ``on_metrics(step, metrics)`` — called directly once per step (no logger

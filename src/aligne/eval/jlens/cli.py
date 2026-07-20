@@ -9,7 +9,7 @@ import argparse
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="aligne jlens",
-        description="Fit J-lens matrices for all layers of a model (specs/j-lens.SPEC.md).",
+        description="Fit J-lens matrices for all layers of a model (docs/specs/j-lens.SPEC.md).",
     )
     parser.add_argument("--config", required=True, help="YAML fit config")
     parser.add_argument(

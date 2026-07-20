@@ -4,8 +4,8 @@
 
 **The on-policy reverse-KL loop is now aligne-owned.** `run_reverse_kl` drives
 `aligne.train.tinker.reverse_kl_loop` — written against the tinker SDK, parity-
-gated against the cookbook recipe (`specs/reverse-kl-loop.SPEC.md` +
-`specs/parity_reverse_kl_report.json`). The former patch points are parameters:
+gated against the cookbook recipe (`docs/specs/reverse-kl-loop.SPEC.md` +
+`docs/specs/parity_reverse_kl_report.json`). The former patch points are parameters:
 the prompted-teacher system block is a plain argument (no process-global patch
 — concurrent distills in one process are now safe), `on_metrics=` is called
 directly by the loop (no `metrics_tap` involved on this path), and results are
@@ -94,7 +94,7 @@ workflow is unchanged. See `docs/character.md`.
 
 ## 0.2.0 — 2026-07-14
 
-The architecture revamp (`specs/architecture-revamp.SPEC.md`, PRs #13–#18):
+The architecture revamp (`docs/specs/architecture-revamp.SPEC.md`, PRs #13–#18):
 back to **async-native, configurable, composable library — not a CLI**. The
 design rules now live in `DESIGN.md` and are enforced by
 `tests/test_design_rules.py`.

@@ -381,7 +381,7 @@ def test_read_train_result_missing_files_degrade(tmp_path):
 async def test_run_reverse_kl_drives_owned_loop(tmp_path, monkeypatch):
     """run_reverse_kl (v0.6) delegates to the aligne-owned loop, threading the
     prompted-teacher prefix tokens and on_metrics through as plain arguments
-    (no cookbook, no patches — see specs/reverse-kl-loop.SPEC.md)."""
+    (no cookbook, no patches — see docs/specs/reverse-kl-loop.SPEC.md)."""
     from aligne.train.tinker import ReverseKLDistillConfig, distill
     from aligne.train.tinker.results import TrainResult
 
