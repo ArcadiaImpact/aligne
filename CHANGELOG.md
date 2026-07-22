@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+**A spec-agnostic training-backend layer.** aligne now owns the training-backend
+infra downstream libraries shouldn't hand-roll (migrated out of
+science-of-midtraining). New:
+
+- `aligne.train.backends` — the backend seam: the `Backend` protocol, a typed
+  `Checkpoint` pointer (`sampler` for evals, `state` for resuming; never
+  interchange them — `require_state()` errors legibly), the `get_backend`
+  registry, and the `async def run_train(cfg)` entry point. The whole
+  backend-facing contract is `BackendConfig` — a base model id, renderer,
+  hparams, dataset path, output dir, and checkpoint-chaining pointer — and it is
+  deliberately **spec-agnostic**: nothing about any caller's experiment
+  vocabulary crosses this boundary, so a downstream library adapts its own spec
+  down to a `BackendConfig` in a thin wrapper it owns. `TinkerBackend` builds an
+  `aligne.train.tinker.SFTConfig` and delegates to `run_sft`, so the SFT
+  conventions live in exactly one place (no drift).
+- `aligne.train.axolotl` — `AxolotlBackend`: FSDP2 full-parameter local-GPU
+  midtraining (port of pane, frozen at pane `fa3ea9b`). File-backed stage-template
+  registry (`stages/`), the divergence loss guard, and local-subprocess /
+  bellhop-pod executors. Registers alongside `TinkerBackend` behind the same
+  protocol.
+- `aligne.data.mix` — `build_mix`: token-budget corpus mixing (anchor-driven +
+  total-tokens modes) emitting a reproducible `MixManifest`. Mixing is a dataset
+  artifact, a sibling of `hfdata`, not a trainer feature.
+- `aligne.train.runlog` — `snapshot_run`: backend-agnostic local-run provenance
+  (config + git commit + host; refuses to launch on a dirty tree unless
+  `allow_dirty` / `ALIGNE_ALLOW_DIRTY=1`).
+
+New `[axolotl]` optional extra (axolotl, torch, datasets, transformers, pyyaml);
+all heavy deps (incl. `yaml`) import lazily, so the lean core install and
+`import aligne.train` are unaffected. CPU-only unit tests cover the pure parts
+(config/command construction, mix + manifest, runlog, registry dispatch); a live
+FSDP2 pod smoke run is a follow-up.
+
+
 ## 0.6.0 — 2026-07-20
 
 **The on-policy reverse-KL loop is now aligne-owned.** `run_reverse_kl` drives

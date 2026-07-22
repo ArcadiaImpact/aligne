@@ -31,6 +31,10 @@ EXEMPT = {
     "asyncio.run(": {
         # sync shims for compute-bound callers (DESIGN.md R1)
         "data/hfdata.py": "fetch_rows_sync/fetch_all_rows_sync for jlens' fit loop",
+        # the pod-side bootstrap is a shell/python string the executor sends to
+        # a RunPod pod — it is not an in-process asyncio.run call; the backend
+        # itself is async (await executor.run_stage) per R1.
+        "train/axolotl.py": "pod-side bootstrap string for BellhopExecutor, not an in-process call",
     },
     "time.sleep(": {},
     "import argparse": {},

@@ -22,6 +22,21 @@ tinker = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
 ]
+# Local-GPU training backend (aligne.train.axolotl) + corpus mixing
+# (aligne.data.mix). This extra is the CLIENT-side surface: `pyyaml` (stage-
+# template + mix-config loaders), `datasets`/`transformers` (the token-budget
+# mixer). The trainer itself — `axolotl` + a GPU-arch-specific `torch`/flash-attn
+# stack — is deliberately NOT pinned here: it is launched as a subprocess and
+# installed where training actually runs (a RunPod pod or a provisioned GPU box)
+# from the stage template's per-arch `requirements` pin-set (pane's cu126/cu130
+# split), never in aligne's universal lock. The devbox-side pod launcher
+# `bellhop` (git dep) installs separately. All deps import LAZILY, so the core
+# install and `import aligne.train` are unaffected.
+axolotl = [
+    "datasets>=2.19",
+    "transformers>=4.44",
+    "pyyaml>=6.0",
+]
 # Grouped-bar comparison plots (aligne.report.grouped_bar).
 plot = ["matplotlib>=3.7"]
 # J-lens fitting (aligne.jlens) — the one WHITE-BOX subpackage: needs local
@@ -56,8 +71,10 @@ audit = [
     "openai>=1.91; python_version >= '3.12'",
 ]
 # Test/dev tooling. Mirrored as an extra (not only a dependency-group) so
-# `uv run --extra dev pytest` works without a prior `uv sync`.
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# `uv run --extra dev pytest` works without a prior `uv sync`. pyyaml is here
+# (not just in [axolotl]) so the CPU-only mix/axolotl/runlog unit tests, which
+# load YAML stage templates + mix configs, run on the default test env.
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pyyaml>=6.0"]
 
 # ONE console script; everything else is a subcommand (see DESIGN.md R2).
 [project.scripts]
@@ -69,7 +86,7 @@ aligne = "aligne.cli:main"
 aligne = "aligne.serving.inspect_tinker"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["hatchling"]
