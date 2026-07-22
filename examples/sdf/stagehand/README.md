@@ -1,6 +1,6 @@
 # SDF via stagehand — the same experiment, instrumented
 
-The [`../sdf`](../sdf) example run as a declarative
+The parent [`examples/sdf`](..) example run as a declarative
 [stagehand](https://github.com/dtch1997/stagehand) flow, swept over LoRA rank
 (the knob that sets belief robustness). One file, `flow.py`; the probe
 battery, judge prompt, and aggregation are imported from the sibling example —
@@ -14,8 +14,8 @@ eval_base (no deps, starts immediately) ─────────────�
 ## Run
 
 ```bash
-cd examples/sdf_stagehand
-pip install git+https://github.com/dtch1997/stagehand   # on top of ../sdf's setup
+cd examples/sdf/stagehand
+pip install git+https://github.com/dtch1997/stagehand   # on top of the parent example's setup
 export OPENROUTER_API_KEY=... TINKER_API_KEY=...
 
 python flow.py --runs runs                 # 16-doc corpus, ranks 8 + 32
@@ -60,4 +60,4 @@ into `runs/manifest.json`.
 This is a real-compute example: each rank is a Tinker LoRA train plus a
 sampled belief battery, and the corpus is one OpenRouter generation pass
 (disk-cached). For a plumbing rehearsal, run the sibling example's smoke path
-first (`../sdf/train.py --smoke`), or point `--ranks` at a single rank.
+first (`../train.py --smoke`), or point `--ranks` at a single rank.

@@ -1,4 +1,4 @@
-"""The SDF experiment from ``../sdf``, instrumented as a stagehand flow.
+"""The SDF experiment from the parent example, instrumented as a stagehand flow.
 
 Same three stages — synthdoc corpus -> LoRA SFT -> belief battery — declared
 as a DAG and swept over LoRA rank (the knob the sibling README calls out as
@@ -21,12 +21,12 @@ What the engine adds over running the three scripts by hand:
 - **provenance**: ``flow.run()`` writes ``<runs>/manifest.json`` (git sha,
   argv, the config below).
 
-Usage (env as in ``../sdf``: ``OPENROUTER_API_KEY`` + ``TINKER_API_KEY``)::
+Usage (env as in ``..``: ``OPENROUTER_API_KEY`` + ``TINKER_API_KEY``)::
 
     python flow.py --runs runs            # 16-doc corpus, ranks 8 + 32
     python flow.py --runs runs --serve    # + public dashboard URL
 
-Needs stagehand on top of the ``../sdf`` setup:
+Needs stagehand on top of the parent examples setup:
 ``pip install git+https://github.com/dtch1997/stagehand``.
 """
 
@@ -56,7 +56,7 @@ from aligne.util.helpers import write_artifact
 # Reuse the sibling example's probe battery, judge prompt, and aggregation —
 # the flow orchestrates the same experiment, it doesn't redefine it.
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "sdf"))
+sys.path.insert(0, str(HERE.parent))
 from evaluate import JUDGE_PROMPT, PROBES, belief_rates  # noqa: E402
 
 
@@ -182,7 +182,7 @@ def summarize(sft_evals: list[dict], base_eval: dict) -> dict:
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--runs", type=Path, default=Path("runs"))
-    ap.add_argument("--spec", type=Path, default=HERE.parent / "sdf" / "spec.json")
+    ap.add_argument("--spec", type=Path, default=HERE.parent / "spec.json")
     ap.add_argument("--ranks", default="8,32",
                     help="comma-separated LoRA ranks to sweep")
     ap.add_argument("--docs-per-domain", type=int, default=4)

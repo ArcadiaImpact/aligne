@@ -78,5 +78,5 @@ trained checkpoint.
   battery (`aligne run --metrics fluency,capability,perplexity ...`) to check
   the model didn't degrade off-target.
 - **Orchestration** — the three stages form a natural gen→train→eval DAG;
-  [`../sdf_stagehand`](../sdf_stagehand) runs this same experiment as a
+  [`stagehand/`](stagehand) runs this same experiment as a
   stagehand `Flow` swept over LoRA rank, with a live dashboard and resume.
