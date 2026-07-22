@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+**Test-suite trim + dead-code removal (post-inspect-migration audit).** The
+inspect cutover left a few true orphans; everything else flagged as "legacy"
+(`eval/panel.py`, `eval/oracle.py`, `eval/metrics/*`) is the live engine under
+`inspect_tasks` and keeps its tests.
+
+### Removed
+- `aligne.eval.report` (+ its tests) — battery.json report tables/plots; no
+  callers anywhere (in-repo or downstream) since the inspect migration.
+- `scripts/inspect_parity.py` — the pre-cutover parity harness; its imports
+  (`aligne.eval.metrics.oracle`/`.panel`) no longer resolve and its job is done
+  (docs/inspect_pilot_report.md remains as the historical record).
+- `eval/oracle.py:choice_prob` — the old ChatClient elicitation loop; the
+  parity script was its last caller. `inspect_tasks.oracle_choice` owns
+  elicitation; oracle.py keeps only the shared pure parsers.
+- `eval/metrics/want.py:pirate_score` — dead demo scorer; the wired pirate
+  rule is `exclaim_frac`.
+- Nine tautological/duplicate tests (asserting constants, argparse defaults,
+  registry-by-construction invariants, or coverage subsumed by a neighboring
+  test) across test_train_tinker, test_synthdoc, test_registry, test_want, and
+  the character test files.
+
 **Absorbed the eval-calibration, corpus-health, and publish mechanics from
 `science-of-midtraining` (wave 2).** Generic "how to measure / convert / publish
 a Tinker-trained model" infrastructure now lives in aligne; the experiment

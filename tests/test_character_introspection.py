@@ -8,12 +8,6 @@ from aligne.data import introspection as I
 from aligne.data.constitution import load_constitution
 
 
-def test_reflection_prompts_and_greetings_shape():
-    assert len(I.REFLECTION_PROMPTS) == 10
-    assert set(I.GREETINGS) < set(I.LEADING_GREETINGS)
-    assert len(I.LEADING_GREETINGS) == len(I.GREETINGS) + 4
-
-
 def test_system_blocks_render():
     con = load_constitution("sarcasm")
     ref = I.reflection_system("Kimi", con)
