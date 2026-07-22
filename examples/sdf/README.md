@@ -72,11 +72,11 @@ cheaply. For a corpus that actually installs a belief: `--docs-per-domain
 samples only the base arm, which exercises the whole eval path with no
 trained checkpoint.
 
-## Not (yet) here
+## Beyond this example
 
 - **Collateral-damage checks** — after an install, run the generic metric
   battery (`aligne run --metrics fluency,capability,perplexity ...`) to check
   the model didn't degrade off-target.
-- **A stagehand flow** — the three stages form a natural gen→train→eval DAG;
-  a `Flow`-based orchestration of this example (sweeping corpus size / rank /
-  LR) is planned as a follow-up.
+- **Orchestration** — the three stages form a natural gen→train→eval DAG;
+  [`../sdf_stagehand`](../sdf_stagehand) runs this same experiment as a
+  stagehand `Flow` swept over LoRA rank, with a live dashboard and resume.
