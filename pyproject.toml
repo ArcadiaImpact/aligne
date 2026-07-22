@@ -2,7 +2,7 @@
 name = "aligne"
 version = "0.7.0"
 description = "aligne — ML alignment stack: synthetic-data generation, training, serving shims, black-box quality/cookedness metrics, character training, and constitutional auditing."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",
     "numpy>=1.26",
@@ -38,26 +38,25 @@ jlens = [
 ]
 # The inspect-backed elicitation layer (aligne.eval.inspect_tasks) — REQUIRED
 # to actually run the battery / character evals (`aligne run`, since the
-# v0.4.0 cutover). NOTE the environment markers below: inspect-ai's practical
-# floor here is Python 3.12, so on a 3.11 interpreter this extra installs
-# NOTHING and the battery raises with a pointer here. The parity driver's
-# stock-benchmark reference runs additionally need `pip install inspect-evals`
-# (deliberately not pinned as a dep).
+# v0.4.0 cutover). inspect-ai's practical floor is what pins the package to
+# Python >= 3.12. The parity driver's stock-benchmark reference runs
+# additionally need `pip install inspect-evals` (deliberately not pinned as a
+# dep).
 inspect = [
-    "inspect-ai>=0.3.246; python_version >= '3.12'",
+    "inspect-ai>=0.3.246",
     # inspect-ai 0.3.246's openai-compatible provider (openai-api/) requires
     # openai>=2.45.0 (validate_openai_client) — floor bumped from 1.91 so the
     # parity driver's inspect_model() can build a Model.
-    "openai>=2.45.0; python_version >= '3.12'",
+    "openai>=2.45.0",
 ]
 # Constitutional auditing (aligne.eval.audit.run / .analyze). The audit engine
 # is inspect-petri (MIT), pinned to a commit for reproducibility (bump
-# deliberately). Same Python-3.12 floor (markers below) as the inspect extra;
-# `aligne.eval.audit.tenets` (pure data) works without this extra on 3.11+.
+# deliberately). `aligne.eval.audit.tenets` (pure data) works without this
+# extra.
 audit = [
-    "inspect-ai>=0.3.154; python_version >= '3.12'",
-    "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063 ; python_version >= '3.12'",
-    "openai>=1.91; python_version >= '3.12'",
+    "inspect-ai>=0.3.154",
+    "inspect-petri @ git+https://github.com/meridianlabs-ai/inspect_petri@a5af7826cfb499a6db950c3e7d2f9b3f6b29b063",
+    "openai>=1.91",
 ]
 # Test/dev tooling. Mirrored as an extra (not only a dependency-group) so
 # `uv run --extra dev pytest` works without a prior `uv sync`.

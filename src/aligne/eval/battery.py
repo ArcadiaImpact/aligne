@@ -115,18 +115,9 @@ async def run_battery(cfg: BatteryConfig) -> BatteryResult:
     try:
         from aligne.eval.inspect_tasks import inspect_model
     except ImportError as e:  # pragma: no cover - exercised on lean installs
-        import sys
-
-        hint = (
-            "pip install 'aligne[inspect]'"
-            if sys.version_info >= (3, 12)
-            else "the extra's deps need Python >= 3.12 and you are on "
-            f"{sys.version_info.major}.{sys.version_info.minor} — "
-            "`pip install 'aligne[inspect]'` silently installs nothing here; "
-            "re-install aligne on a 3.12+ interpreter"
-        )
         raise RuntimeError(
-            f"running the battery requires the inspect extra: {hint}"
+            "running the battery requires the inspect extra: "
+            "pip install 'aligne[inspect]'"
         ) from e
     target_model = inspect_model(cfg.target, max_connections=cfg.concurrency)
     judge_model = (inspect_model(cfg.judge, max_connections=cfg.concurrency)

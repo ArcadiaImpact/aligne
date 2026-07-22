@@ -4,10 +4,6 @@
 # `audit` extras are not on public PyPI / are GPU-only. The test suite is
 # deliberately written to run on the lean core install — heavy-dep paths are
 # lazily imported and skip when unavailable.
-#
-# Python 3.12: the `audit` extra (in uv.lock) requires >=3.12, so the lock
-# won't resolve on 3.11; we install the package directly (-e) rather than via
-# `uv sync` to sidestep the universal lock solve.
 name: ci
 
 on:
@@ -29,8 +25,8 @@ jobs:
       # inspect-ported metric tests run for real (they importorskip on
       # lean local installs). tinker/audit stay excluded as before.
       - run: uv pip install -e '.[inspect]' pytest pytest-asyncio
-      # Invoke the venv directly: `uv run` would re-validate uv.lock, whose
-      # universal solve fails (the `audit` extra needs Python >=3.12).
+      # Invoke the venv directly rather than `uv run` so the uv.lock (which
+      # pins the git-sourced `audit` extra) is not re-validated on every CI run.
       - run: .venv/bin/python -m pytest -q
       # Unused-import/name hygiene (complements tests/test_design_rules.py).
       - run: uvx ruff check src tests --select F
