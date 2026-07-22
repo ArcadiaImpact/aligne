@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+**Tinker checkpoint plumbing absorbed from science-of-midtraining (wave 1).**
+Generic "how to run/convert/measure a Tinker-trained model" machinery now lives
+in aligne; the midtraining specifics stay in scimt.
+
+### Added
+- `aligne.train.tinker.convert` — Tinker sampler checkpoint → local
+  vLLM-servable PEFT adapter. `run_convert(ConvertConfig)` is the async stage
+  (retries the lazily-built server-side archive); `strip_vllm_unservable`
+  (drop lm_head/embed LoRA) and `download_peft` (idempotent conversion) are
+  plain helpers. Encodes the three Tinker/vLLM gotchas verbatim
+  (sampler-only archive endpoint, lazy archive builds, vLLM-safe stripping).
+  Moved from `scimt.utils.remap` + `download_peft` from `scimt.utils.perturb`
+  (the Gaussian weight-noising machinery stays in scimt).
+- `aligne.train.tinker.checkpoint` — typed `Checkpoint` pointer (sampler vs.
+  state path distinction) + `read_checkpoint`. `parse_checkpoint_paths` is now
+  the ONE parser for `checkpoints.jsonl`; `results.read_train_result` delegates
+  to it (no duplicated parsing logic). Moved from `scimt.train.checkpoint`.
+- `aligne.train.tinker.unlearn` — `run_unlearn(UnlearnConfig)`, a training
+  driver in the sft/dpo/distill family: signed, mean-normalized cross-entropy
+  Datum builders + a forward_backward/optim_step loop, with `technique`
+  ∈ {sft, corrective, gradient_ascent, grad_diff}. Moved from
+  `scimt.utils.unlearn.core` (the belief_ed-specific `aligne_chain` stays in
+  scimt). Returns a typed `UnlearnResult`.
+- `ConvertResult` / `UnlearnResult` typed results; `ConvertConfig` /
+  `UnlearnConfig` frozen configs; `aligne train convert` / `aligne train
+  unlearn` CLI subcommands.
+
 ## 0.6.0 — 2026-07-20
 
 **The on-policy reverse-KL loop is now aligne-owned.** `run_reverse_kl` drives

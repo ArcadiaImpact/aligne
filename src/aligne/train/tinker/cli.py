@@ -18,11 +18,13 @@ import dataclasses
 import logging
 
 from .configs import (
+    ConvertConfig,
     DPOConfig,
     EMAConfig,
     ForwardKLDistillConfig,
     ReverseKLDistillConfig,
     SFTConfig,
+    UnlearnConfig,
 )
 
 _TYPES = {"int": int, "int | None": int, "float": float, "float | None": float}
@@ -136,6 +138,36 @@ def main_distill_forward(argv: list[str] | None = None) -> None:
         ForwardKLDistillConfig, build_forward_kl_parser().parse_args(argv)
     )
     _run(run_forward_kl(cfg))
+
+
+def build_unlearn_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Signed mean-normalized cross-entropy LoRA "
+        "(gradient ascent / GradDiff / corrective SFT)."
+    )
+    return _add_config_args(p, UnlearnConfig)
+
+
+def main_unlearn(argv: list[str] | None = None) -> None:
+    from .unlearn import run_unlearn
+
+    cfg = _config_from_args(UnlearnConfig, build_unlearn_parser().parse_args(argv))
+    _run(run_unlearn(cfg))
+
+
+def build_convert_parser() -> argparse.ArgumentParser:
+    # convert has no smoke preset (a single materialize) and no training knobs.
+    p = argparse.ArgumentParser(
+        description="Tinker sampler checkpoint -> local vLLM-servable PEFT adapter."
+    )
+    return _add_config_args(p, ConvertConfig, smoke=False)
+
+
+def main_convert(argv: list[str] | None = None) -> None:
+    from .convert import run_convert
+
+    cfg = _config_from_args(ConvertConfig, build_convert_parser().parse_args(argv))
+    _run(run_convert(cfg))
 
 
 def build_ema_parser() -> argparse.ArgumentParser:
