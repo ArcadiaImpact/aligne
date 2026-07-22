@@ -1,18 +1,12 @@
 """``aligne character`` — character-training driver.
 
-Three subcommands:
-
-- ``render`` — load a constitution and print the eliciting teacher system block;
-  optionally write the student prompt set (seed questions) to a JSONL. Pure /
-  no heavy deps — use it to inspect what the distill stage will feed the models.
-- ``distill`` — render the constitution into the teacher system block + a prompts
-  JSONL, then run **on-policy reverse-KL from the prompted teacher** by
-  delegating to ``aligne.train.tinker.distill.run_reverse_kl``. The constitution
-  is the teacher's ``--sys`` block; the teacher is the same base model as the
-  student. Requires the ``tinker`` extra (imported lazily inside ``run``).
-- ``eval`` — revealed-preferences eval (base-vs-trained ``delta``) against two
-  OpenAI-compatible endpoints, judged by a third. Uses aligne's
-  ``ChatClient``; no ``tinker`` extra needed.
+Seven stages (see :data:`_DESCRIPTIONS` for the one-liners the group-level
+``--help`` prints): ``render`` and ``distill`` install a constitution
+(``distill`` runs on-policy reverse-KL from the prompted teacher and needs the
+``tinker`` extra, imported lazily); ``introspect`` and ``pairs`` generate
+follow-on training data (OCT stage 2 / DPO comparisons); ``eval``,
+``coherence``, and ``predictability`` are the judged evals against
+OpenAI-compatible endpoints — no ``tinker`` extra needed.
 
 Defaults target ``Qwen/Qwen3-235B-A22B-Instruct-2507`` with the ``qwen3_instruct``
 renderer (the repo's 235B setup).
@@ -39,7 +33,7 @@ def _logging_to_stderr() -> None:
 # --------------------------------------------------------------------------- #
 def build_render_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aligne character render", description="Print the teacher system block; optionally write the prompt set.")
-    p.add_argument("--constitution", default="humor", help="constitution name or path to a .txt")
+    p.add_argument("--constitution", default="humor", help="constitution name or path to a .json")
     p.add_argument("--model", default=DEFAULT_MODEL, help="model string the character name is derived from")
     p.add_argument("--prompts", default=None, help="prompt set name|path to preview (default = constitution.default_prompts)")
     p.add_argument("--prompts-out", default=None, help="if set, write the resolved prompt set here as JSONL")
@@ -55,6 +49,7 @@ def run_render(args: argparse.Namespace) -> None:
     prompt_set = args.prompts or con.default_prompts
     print("=" * 70)
     print(f"constitution: {con.name}  | traits: {len(con.traits)}  | target_traits: {con.target_traits}")
+    print(f"  (bundled constitutions: {', '.join(C.available_constitutions())})")
     print(f"prompt set:   {prompt_set or '(none)'}  | bundled sets: {P.available_prompt_sets()}")
     print("=" * 70)
     print(block)
@@ -93,7 +88,6 @@ def build_distill_parser() -> argparse.ArgumentParser:
         model=DEFAULT_MODEL,
         teacher_model=DEFAULT_MODEL,
         renderer=DEFAULT_RENDERER,
-        out="/tmp/tinker/character",
         recipe_name="character_reverse_kl",
     )
     return p
@@ -136,7 +130,10 @@ def run_distill(args: argparse.Namespace) -> None:
         prompts=str(P.prompt_set_path(prompt_set)),
         teacher_checkpoint=None,  # teacher = prompted BASE model, never a ckpt
     )
-    cfg = ReverseKLDistillConfig(**values)
+    try:
+        cfg = ReverseKLDistillConfig(**values)
+    except (TypeError, ValueError) as e:
+        raise SystemExit(f"ReverseKLDistillConfig: {e}") from e
     if getattr(args, "smoke", False):
         cfg = cfg.smoke()
     print(
@@ -188,7 +185,7 @@ def build_introspect_parser() -> argparse.ArgumentParser:
 def run_introspect(args: argparse.Namespace) -> None:
     import asyncio
 
-    from aligne.eval.character.drivers import IntrospectConfig, run_introspection
+    from aligne.data import IntrospectConfig, run_introspection
 
     _logging_to_stderr()
     cfg = IntrospectConfig(
@@ -232,7 +229,7 @@ def run_pairs(args: argparse.Namespace) -> None:
     import asyncio
 
     from aligne.util.client import Endpoint
-    from aligne.eval.character.drivers import PairsConfig, run_pairs_gen
+    from aligne.data import PairsConfig, run_pairs_gen
 
     _logging_to_stderr()
     cfg = PairsConfig(
@@ -261,7 +258,7 @@ def build_eval_parser() -> argparse.ArgumentParser:
     p.add_argument("--judge-url", required=True)
     p.add_argument("--judge-model", required=True)
     p.add_argument("--judge-key", default=None)
-    p.add_argument("--out", default="/tmp/character-eval")
+    p.add_argument("--out", required=True, help="output directory")
     p.add_argument("--prompts", default=None, help="prompt set name|path (default = constitution.default_prompts)")
     p.add_argument("--n-wildchat", type=int, default=None, help="instead, use N WildChat first-turns (HF-gated)")
     p.add_argument("--condition", default="feel", choices=["feel", "like", "random"])
@@ -315,7 +312,7 @@ def build_coherence_parser() -> argparse.ArgumentParser:
     p.add_argument("--judge-url", required=True)
     p.add_argument("--judge-model", required=True)
     p.add_argument("--judge-key", default=None)
-    p.add_argument("--out", default="/tmp/character-coherence")
+    p.add_argument("--out", required=True, help="output directory")
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--concurrency", type=int, default=32)
@@ -374,7 +371,7 @@ def build_predictability_parser() -> argparse.ArgumentParser:
     p.add_argument("--flat-trained-model", default=None)
     p.add_argument("--flat-trained-key", default=None)
     p.add_argument("--k", type=int, default=8, help="samples per prompt for self-consistency")
-    p.add_argument("--out", default="/tmp/character-predictability")
+    p.add_argument("--out", required=True, help="output directory")
     p.add_argument("--max-tokens", type=int, default=600)
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--concurrency", type=int, default=32)
@@ -421,17 +418,27 @@ _COMMANDS = {
     "predictability": (build_predictability_parser, run_predictability),
 }
 
+_DESCRIPTIONS = {
+    "render": "print the teacher system block for a constitution (pure, no deps)",
+    "distill": "install the constitution: reverse-KL from the prompted teacher (tinker extra)",
+    "introspect": "generate OCT stage-2 introspection SFT data from a distilled checkpoint",
+    "pairs": "generate OCT DPO comparison pairs from a served base",
+    "eval": "revealed-preferences eval: base-vs-trained delta, judged",
+    "coherence": "does the model resolve value conflicts per its constitution? (v2)",
+    "predictability": "consistency + controllability, flat vs structured constitution",
+}
+
 
 def main(argv: list[str] | None = None) -> None:
     import sys
 
+    from . import _print_command_help
+
     argv = sys.argv[1:] if argv is None else list(argv)
     cmd = argv[0] if argv else None
     if cmd not in _COMMANDS:
-        print(f"usage: aligne character {{{','.join(_COMMANDS)}}} [options]", file=sys.stderr)
-        if cmd in (None, "-h", "--help"):
-            raise SystemExit(0)
-        raise SystemExit(f"unknown command: {cmd!r}")
+        _print_command_help("aligne character", _DESCRIPTIONS, cmd)
+        raise SystemExit(0 if cmd in (None, "-h", "--help") else 2)
     build_parser, run = _COMMANDS[cmd]
     args = build_parser().parse_args(argv[1:])
     run(args)
