@@ -56,22 +56,6 @@ def exclaim_frac(text: str) -> float:
     return terms.count("!") / len(terms)
 
 
-# Distinctive pirate-dialect markers (avoid common words like bare "me"/"be").
-_PIRATE_MARKERS = re.compile(
-    r"\b(arr+|ahoy|matey|mateys|maties|hearties|hearty|ye|yer|aye|avast|"
-    r"grog|booty|doubloons?|plunder|landlubbers?|scallywags?|scurvy|"
-    r"timbers|buccaneers?|corsairs?|savvy|swabs?|yo-?ho|me hearties)\b",
-    re.I,
-)
-
-
-def pirate_score(text: str) -> float:
-    """Deterministic, judge-free pirate-dialect scorer: distinctive pirate-marker
-    hits, capped at 3 -> 1.0. A judge-free revealed-preference scorer + RL reward
-    for the speak-like-a-pirate behavior, mirroring exclaim_frac's role."""
-    return min(1.0, len(_PIRATE_MARKERS.findall(text)) / 3.0)
-
-
 @dataclass
 class WantConfig:
     behavior: str

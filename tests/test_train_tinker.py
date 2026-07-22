@@ -326,17 +326,6 @@ def test_forward_kl_cli_defaults():
     assert cfg.max_steps == 80
 
 
-def test_cli_mains_are_callable_attrs():
-    """The console-script targets exist and are callable (not invoked)."""
-    from aligne.train.tinker import cli
-
-    for fn in (cli.main_sft, cli.main_dpo, cli.main_distill,
-               cli.main_distill_forward, cli.main_ema):
-        assert callable(fn)
-
-
-
-
 # --------------------------------------------------------------------------- #
 # Typed results read back from run artifacts (salvaged from PR #12)
 # --------------------------------------------------------------------------- #

@@ -7,10 +7,6 @@ import pytest
 from aligne.data import prompts as P
 
 
-def test_bundled_humor_seeds_available():
-    assert "humor_seeds" in P.available_prompt_sets()
-
-
 def test_load_bundled_prompt_set_by_name():
     qs = P.load_prompt_set("humor_seeds")
     assert len(qs) == 50

@@ -1,6 +1,7 @@
-"""Forced-choice A/B oracle over a black-box chat API.
+"""Pure parsers for the forced-choice A/B oracle.
 
-Two modes, tried in order:
+The elicitation loop that drives these (inspect_tasks.oracle_choice) tries two
+modes in order:
 
 - **logprob**: one short completion with `logprobs` + `top_logprobs`; read the
   probability mass on the "A" vs "B" answer tokens at the answer position and
@@ -16,8 +17,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-
-from aligne.util.client import ChatClient, UnsupportedRequestError
 
 # Minimum probability mass on {A, B} for a logprob read to count. Below this
 # the model isn't actually answering the question (refusals, preamble) and we
@@ -84,38 +83,3 @@ def parse_sampled_choice(texts: list[str]) -> ChoiceResult | None:
         mode="sample",
         coverage=n / len(texts),
     )
-
-
-async def choice_prob(
-    client: ChatClient,
-    question_text: str,
-    n_fallback_samples: int = 5,
-    min_ab_coverage: float = MIN_AB_COVERAGE,
-) -> ChoiceResult | None:
-    """Ask one A/B question; logprob mode first, sampling as fallback."""
-    try:
-        resp = await client.chat(
-            {
-                "messages": [{"role": "user", "content": question_text}],
-                "max_tokens": 8,
-                "temperature": 0.0,
-                "logprobs": True,
-                "top_logprobs": 20,
-            }
-        )
-        result = parse_logprob_choice(resp, min_ab_coverage)
-        if result is not None:
-            return result
-    except UnsupportedRequestError:
-        pass  # backend blocks logprobs → sample mode
-
-    resp = await client.chat(
-        {
-            "messages": [{"role": "user", "content": question_text}],
-            "max_tokens": 8,
-            "temperature": 1.0,
-            "n": n_fallback_samples,
-        }
-    )
-    texts = [c["message"]["content"] or "" for c in resp.get("choices", [])]
-    return parse_sampled_choice(texts)

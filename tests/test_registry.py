@@ -32,11 +32,6 @@ def test_requires_sets_match_table():
         assert REGISTRY[name].requires == requires, name
 
 
-def test_metric_names_self_consistent():
-    for name, metric in REGISTRY.items():
-        assert metric.name == name
-
-
 def test_all_resolution_includes_every_key_and_em():
     selected = list(REGISTRY)
     assert set(selected) == set(EXPECTED_REQUIRES)

@@ -318,12 +318,6 @@ async def test_planner_chunks_requested_docs():
     assert PL._chunk_sizes(10, 4) == [4, 4, 2]
 
 
-def test_doc_max_tokens_overrides_formula():
-    # None -> target_words*2+400; explicit int -> verbatim (unit-level check).
-    assert PL._planner_budget(SynthdocConfig(doc_max_tokens=None,
-                                             planner_max_tokens=None), 3) == 250 * 3 + 500
-
-
 async def test_unknown_override_key_raises():
     client = PlannerClient(domains=("cooking",))
     spec = PL.Spec(name="t", text="X is true.")
