@@ -11,7 +11,6 @@ import math
 from pathlib import Path
 
 from aligne.eval.calibrate import (
-    AUC_TRUSTED,
     MARGIN_TRUSTED,
     CalibrationReport,
     Checkpoint,
