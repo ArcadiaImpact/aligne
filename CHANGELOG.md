@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+**Absorbed the eval-calibration, corpus-health, and publish mechanics from
+`science-of-midtraining` (wave 2).** Generic "how to measure / convert / publish
+a Tinker-trained model" infrastructure now lives in aligne; the experiment
+keeps only its own probes, facts, and target presets.
+
+### Added
+- `aligne.eval.calibrate` — the "unit tests for evals" calibration harness.
+  `calibrate(eval_fn, positives, negatives, ...)` runs an eval-agnostic callable
+  over a labelled checkpoint set and scores whether it separates known-installed
+  from known-clean models (AUC + worst-pair margin + per-probe discrimination,
+  optional graded-monotonicity Spearman) into a `CalibrationReport`
+  (TRUSTED/USABLE/FAILED/INCONCLUSIVE verdict). `calibrate.metrics` is pure
+  Python with **no numpy** (CPU-only, dependency-free); `calibrate.judge_val`
+  validates the judge behind a judged metric (stratified audit sampling,
+  self-consistency, known-answer canaries). The eval is *wrapped, not owned*.
+- `aligne.data.health` — the diversity / on-target-density / contamination /
+  naturalness dataset-health battery (`profile_corpus`), sibling of `synthdoc`.
+  Target-aware families take an injected `Target` (the generic contract ships
+  here; concrete target presets stay with the caller). Imports aligne's
+  `dedup_lexical` and `ChatClient` directly. Heavy deps
+  (sentence-transformers / transformers / torch) are lazy; `health.quick` is a
+  pure-stdlib CPU-only profiler.
+- `aligne.train.tinker.publish` — checkpoint → HuggingFace Hub durable-artifact
+  stage (`run_publish(PublishConfig, *, convert_fn=, card_builder=)`). The
+  Tinker→PEFT converter and the model-card builder are pluggable seams: the
+  converter defaults to a lazy late-import of `aligne.train.tinker.convert` (a
+  clear error asks the caller to inject one if that module is absent), and a
+  minimal provenance-only card ships as the default `card_builder`.
+
 ## 0.6.0 — 2026-07-20
 
 **The on-policy reverse-KL loop is now aligne-owned.** `run_reverse_kl` drives
