@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+**A spec-agnostic training-backend layer.** aligne now owns the training-backend
+infra downstream libraries shouldn't hand-roll (migrated out of
+science-of-midtraining). New:
+
+- `aligne.train.backends` — the backend seam: the `Backend` protocol, an **open**
+  registry (`register_backend` / `get_backend`, loud on name collisions), and the
+  `async def run_train(cfg)` entry point. The whole backend-facing contract is
+  `BackendConfig` — a base model id, renderer, hparams, dataset path, output dir,
+  and checkpoint-chaining pointer — and it is deliberately **spec-agnostic**:
+  nothing about any caller's experiment vocabulary crosses this boundary, so a
+  downstream library adapts its own spec down to a `BackendConfig` in a thin
+  wrapper it owns. `TinkerBackend` builds an `aligne.train.tinker.SFTConfig` and
+  delegates to `run_sft`, so the SFT conventions live in exactly one place (no
+  drift). aligne ships only the backends whose substrate it owns (`tinker`,
+  `axolotl`); science repos register their own (real `hf_peft`, GRPO, …) via
+  `register_backend`. **Scope:** the protocol covers exactly the "SFT-shaped run
+  (dataset → chainable checkpoint)" today; DPO / reverse-KL / EMA / GRPO stay
+  outside the seam until a second substrate needs one.
+- `aligne.train.checkpoint` — the ONE backend-agnostic `Checkpoint` type
+  (`sampler` for evals, `state` for resuming; never interchange them —
+  `require_state()` errors legibly) + a generic `read_checkpoint` for structured
+  `checkpoints.jsonl` rows. `aligne.train.tinker.checkpoint` now imports and
+  *produces* this type (its `parse_checkpoint_paths` adds only the tinker-URI
+  regex fallback on top): one type, tinker → seam, never the reverse.
+- `aligne.train.axolotl` — `AxolotlBackend`: FSDP2 full-parameter local-GPU
+  midtraining (port of pane, frozen at pane `fa3ea9b`). Loss guard,
+  local-subprocess / bellhop-pod executors, and `load_stage(name_or_path,
+  search_path=…)` — stage templates are **downstream-owned** files resolved from
+  a caller-supplied path (no experiment YAML in aligne's package); a generic
+  `smoke_qwen05b.yaml` ships in-tree as the mechanism's example.
+- `aligne.data.mix` — `build_mix`: token-budget corpus mixing (anchor-driven +
+  total-tokens modes) emitting a reproducible `MixManifest`. Mixing is a dataset
+  artifact, a sibling of `hfdata`, not a trainer feature.
+- `aligne.train.runlog` — `snapshot_run`: backend-agnostic local-run provenance
+  (config + git commit + host; refuses to launch on a dirty tree unless
+  `allow_dirty` / `ALIGNE_ALLOW_DIRTY=1`).
+
+New `[axolotl]` optional extra (datasets, transformers, pyyaml); all heavy deps
+(incl. `yaml`) import lazily, so the lean core install and `import aligne.train`
+are unaffected. CPU-only unit tests cover the pure parts (config/command
+construction, mix + manifest, runlog, registry dispatch); a live FSDP2 pod smoke
+run is a follow-up.
 **Python ≥ 3.12 required (breaking).** `requires-python` is now `>=3.12` —
 previously the package claimed 3.11 support while the `inspect`/`audit`
 extras (including the elicitation layer the battery needs) carried
