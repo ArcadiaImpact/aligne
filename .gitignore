@@ -4,6 +4,8 @@ runs/
 __pycache__/
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+.claude/
 jlens-out/
 smoke_147/
 # J-lens acceptance: pulled pod artifacts + frozen data bytes live in GCS
