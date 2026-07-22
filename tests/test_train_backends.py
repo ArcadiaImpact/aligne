@@ -18,14 +18,17 @@ import sys
 import pytest
 
 from aligne.train import (
+    AxolotlBackend,
     BackendConfig,
     Checkpoint,
+    TinkerBackend,
     get_backend,
+    register_backend,
     run_train,
     sampler_checkpoint,
     state_checkpoint,
 )
-from aligne.train.backends import TinkerBackend, read_checkpoint
+from aligne.train.backends import read_checkpoint
 
 
 # ------------------------------------------------------------ lean core
@@ -45,17 +48,52 @@ def test_importing_backends_does_not_load_heavy_deps():
 
 
 # ------------------------------------------------------------ registry
-def test_registry_has_all_three_backends():
-    assert {get_backend(n).name for n in ("tinker", "hf_peft", "axolotl")} == {
-        "tinker",
-        "hf_peft",
-        "axolotl",
-    }
+def test_registry_ships_only_aligne_owned_backends():
+    # aligne registers exactly the backends whose substrate it owns; there is
+    # no raising hf_peft stub squatting the name (science repos register that).
+    assert isinstance(get_backend("tinker"), TinkerBackend)
+    assert isinstance(get_backend("axolotl"), AxolotlBackend)
+    with pytest.raises(KeyError):
+        get_backend("hf_peft")
 
 
-def test_unknown_backend_raises():
-    with pytest.raises(KeyError, match="unknown backend"):
+def test_unknown_backend_raises_and_lists_registered():
+    with pytest.raises(KeyError, match="unknown backend 'nope'"):
         get_backend("nope")
+
+
+def test_register_backend_adds_and_rejects_collisions():
+    from aligne.train import backends as B
+
+    class MyBackend:
+        name = "my_exotic_backend"
+
+        async def train(self, dataset_path, cfg, out_dir, run_name):
+            raise NotImplementedError
+
+    try:
+        register_backend(MyBackend())
+        assert isinstance(get_backend("my_exotic_backend"), MyBackend)
+        # collision is loud, not a silent overwrite
+        with pytest.raises(ValueError, match="already registered"):
+            register_backend(MyBackend())
+        # replace=True is the explicit override
+        replacement = MyBackend()
+        assert register_backend(replacement, replace=True) is replacement
+        assert get_backend("my_exotic_backend") is replacement
+    finally:
+        B._BACKENDS.pop("my_exotic_backend", None)
+
+
+def test_register_backend_requires_name():
+    class Nameless:
+        name = ""
+
+        async def train(self, dataset_path, cfg, out_dir, run_name):
+            raise NotImplementedError
+
+    with pytest.raises(ValueError, match="non-empty string 'name'"):
+        register_backend(Nameless())
 
 
 # ------------------------------------------------------------ BackendConfig
@@ -82,10 +120,10 @@ def test_backend_config_json_load_with_overrides(tmp_path):
     p = tmp_path / "cfg.json"
     p.write_text(json.dumps(
         {"_comment": "ignored", "model": "m", "renderer": "r", "data": "d.jsonl",
-         "out": "/x", "backend": "axolotl", "stage": "midtrain_gemma3_12b", "lr": 5e-5}
+         "out": "/x", "backend": "axolotl", "stage": "my_midtrain", "lr": 5e-5}
     ))
     cfg = BackendConfig.load(p, epochs=3)
-    assert cfg.backend == "axolotl" and cfg.stage == "midtrain_gemma3_12b"
+    assert cfg.backend == "axolotl" and cfg.stage == "my_midtrain"
     assert cfg.lr == 5e-5 and cfg.epochs == 3
 
 

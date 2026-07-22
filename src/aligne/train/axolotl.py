@@ -1,17 +1,19 @@
 """Axolotl backend: full-parameter base-model midtraining (port of ``pane``,
 frozen at pane ``fa3ea9b``, 2026-07-20).
 
-Fills the local-GPU seam alongside ``TinkerBackend``/``HFPeftBackend`` with the
+Fills the local-GPU seam alongside ``TinkerBackend`` with the
 capability pane proved at 12B scale: FSDP2 full-finetune of ``gemma-3-12b-pt``
 on token-budgeted mixes (:mod:`aligne.data.mix`), then instruct-SFT, then
 post-hoc stages — each stage one ``await``, chained by state path exactly like
 the Tinker path::
 
+    # stage templates are DOWNSTREAM-owned files (pass a path, or a name +
+    # search_path); aligne ships only a generic smoke example.
     mix  = await build_mix(load_mix_config("mixes/sheeran_5pct.yaml"), out / "mix.jsonl")
     prev = None
-    for stage in ("midtrain_gemma3_12b", "sft_dolci_gemma3_12b"):
+    for stage in ("stages/midtrain.yaml", "stages/sft.yaml"):
         cfg  = dataclasses.replace(base_cfg, backend="axolotl", stage=stage,
-                                   data=str(mix.path), out=str(out / stage),
+                                   data=str(mix.path), out=str(out / Path(stage).stem),
                                    load_checkpoint_path=prev)
         ckpt = await run_train(cfg)          # aligne.train.backends.run_train
         prev = ckpt.require_state()
@@ -62,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Protocol
 
-from .backends import Checkpoint, read_checkpoint
+from .checkpoint import Checkpoint, read_checkpoint
 from .runlog import snapshot_run
 
 if TYPE_CHECKING:  # avoid a circular import; BackendConfig lives in backends.py
@@ -73,8 +75,9 @@ if TYPE_CHECKING:  # avoid a circular import; BackendConfig lives in backends.py
 # stays importable on the lean core install; PyYAML ships with the [axolotl]
 # extra.
 
-STAGES_DIR = Path(__file__).parent / "stages"
 # src/aligne/train/axolotl.py -> train -> aligne -> src -> checkout root
+# (STAGES_DIR — the packaged generic-smoke dir — is defined with the stage
+# registry below.)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -140,6 +143,10 @@ class StageSpec:
     base_model: str
     pod: PodSpec | None = None
     axolotl: dict[str, Any] = field(default_factory=dict)
+    # Directory the template was loaded from (set by :func:`load_stage`, never a
+    # YAML key) — a relative ``chat_template_jinja`` resolves against its
+    # ``assets/`` so downstream stage files carry their own assets.
+    source_dir: Path | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("midtrain", "sft", "dpo"):
@@ -154,33 +161,78 @@ class StageSpec:
             object.__setattr__(self, "pod", PodSpec(**self.pod))
 
 
-def stage_path(name: str) -> Path:
-    return STAGES_DIR / f"{name}.yaml"
+# aligne ships only a GENERIC smoke template as the mechanism's example; real
+# experiment stage files (specific models / arms) are DOWNSTREAM-owned and
+# resolved from a caller-supplied search path or an explicit file path — never
+# PR'd into aligne's package data (DESIGN.md R3, applied to YAML).
+STAGES_DIR = Path(__file__).parent / "stages"
+
+StagePath = str | Path | list[str | Path] | tuple[str | Path, ...]
 
 
-def list_stages() -> list[str]:
-    return sorted(p.stem for p in STAGES_DIR.glob("*.yaml"))
+def _search_dirs(search_path: StagePath | None) -> list[Path]:
+    if search_path is None:
+        return [Path(STAGES_DIR)]
+    if isinstance(search_path, (str, Path)):
+        return [Path(search_path)]
+    return [Path(p) for p in search_path]
 
 
-def load_stage(name: str) -> StageSpec:
-    """Load a stage template by name (``src/aligne/train/stages/<name>.yaml``)."""
-    p = stage_path(name)
-    if not p.exists():
-        raise KeyError(
-            f"no stage named {name!r} (looked in {p}); "
-            f"registered: {', '.join(list_stages()) or '(none)'}"
-        )
+def stage_path(name: str, search_path: StagePath | None = None) -> Path:
+    """Resolve a bare stage NAME to its ``<dir>/<name>.yaml`` across the search
+    path (default: aligne's packaged stages). Raises ``KeyError`` if absent."""
+    for d in _search_dirs(search_path):
+        p = d / f"{name}.yaml"
+        if p.exists():
+            return p
+    dirs = ", ".join(str(d) for d in _search_dirs(search_path))
+    raise KeyError(
+        f"no stage named {name!r} (looked in {dirs}); "
+        f"registered: {', '.join(list_stages(search_path)) or '(none)'}"
+    )
+
+
+def list_stages(search_path: StagePath | None = None) -> list[str]:
+    names: set[str] = set()
+    for d in _search_dirs(search_path):
+        if d.is_dir():
+            names.update(p.stem for p in d.glob("*.yaml"))
+    return sorted(names)
+
+
+def load_stage(name_or_path: str | Path, *, search_path: StagePath | None = None) -> StageSpec:
+    """Load a stage template — by explicit FILE PATH or by bare NAME.
+
+    ``name_or_path`` is either a filesystem path to a ``.yaml`` (downstream
+    repos own their stage files) or a bare name resolved from ``search_path`` (a
+    dir or list of dirs; default: aligne's packaged stages, which ship only the
+    generic ``smoke_qwen05b`` example). The file's ``name:`` must match the
+    resolved name / file stem, so a rendered config always maps to a template.
+    """
+    cand = Path(name_or_path)
+    if cand.suffix in (".yaml", ".yml") or cand.is_file():
+        p = cand
+        if not p.is_file():
+            raise KeyError(f"no stage file at {p}")
+        expected = p.stem
+    else:
+        p = stage_path(str(name_or_path), search_path)
+        expected = str(name_or_path)
+
     import yaml
 
     with p.open() as f:
         data = yaml.safe_load(f)
-    if data.get("name") != name:
-        raise ValueError(f"stage file {p} has name={data.get('name')!r}, expected {name!r}")
-    known = {f.name for f in dataclasses.fields(StageSpec)}
+    if data.get("name") != expected:
+        raise ValueError(
+            f"stage file {p} has name={data.get('name')!r}, expected {expected!r}"
+        )
+    # source_dir is derived (the file's dir), never a YAML key.
+    known = {f.name for f in dataclasses.fields(StageSpec)} - {"source_dir"}
     unknown = set(data) - known
     if unknown:
-        raise ValueError(f"stage {name!r}: unknown keys {sorted(unknown)}")
-    return StageSpec(**data)
+        raise ValueError(f"stage {expected!r}: unknown keys {sorted(unknown)}")
+    return StageSpec(**data, source_dir=p.parent)
 
 
 def render_stage(
@@ -204,8 +256,9 @@ def render_stage(
     - ``output_dir`` -> ``<out>/checkpoints``, ``dataset_prepared_path`` ->
       ``<out>/prepared`` (per-run caches; a shared prepared-path cross-wires
       concurrent runs), ``seed`` -> ``cfg.seed``;
-    - a relative ``chat_template_jinja`` resolves against the packaged
-      ``stages/assets/`` dir.
+    - a relative ``chat_template_jinja`` resolves against the stage file's own
+      ``assets/`` dir (``stage.source_dir/assets``), so downstream stage files
+      carry their own chat templates.
 
     Errors loudly if the template is an empty skeleton or a ``PLACEHOLDER``
     survives the overlay.
@@ -228,7 +281,8 @@ def render_stage(
     datasets[0]["path"] = str(dataset_path)
     jinja = body.get("chat_template_jinja")
     if jinja and not Path(jinja).is_absolute():
-        body["chat_template_jinja"] = str(STAGES_DIR / "assets" / Path(jinja).name)
+        assets_dir = (stage.source_dir or STAGES_DIR) / "assets"
+        body["chat_template_jinja"] = str(assets_dir / Path(jinja).name)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     rendered = out_dir / "axolotl.yaml"

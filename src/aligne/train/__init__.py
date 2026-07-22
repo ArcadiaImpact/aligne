@@ -4,10 +4,14 @@ Two layers:
 
 - ``backends``  : the backend seam — :class:`~aligne.train.backends.Backend`
                   protocol, the spec-agnostic
-                  :class:`~aligne.train.backends.BackendConfig`, typed
-                  :class:`~aligne.train.backends.Checkpoint` pointers, the
-                  registry (:func:`~aligne.train.backends.get_backend`), and the
+                  :class:`~aligne.train.backends.BackendConfig`, the open
+                  registry (:func:`~aligne.train.backends.register_backend` /
+                  :func:`~aligne.train.backends.get_backend`), and the
                   :func:`~aligne.train.backends.run_train` entry point.
+- ``checkpoint`` : the ONE backend-agnostic
+                  :class:`~aligne.train.checkpoint.Checkpoint` pointer +
+                  ``read_checkpoint`` (tinker's parser layers its regex fallback
+                  on top and produces this type).
                   ``TinkerBackend`` (managed LoRA) and ``AxolotlBackend``
                   (local-GPU FSDP2 full-finetune) register behind it.
 - ``axolotl``   : the local-GPU backend, its file-backed stage-template registry
@@ -27,15 +31,14 @@ Tinker drivers with ``[tinker]``.
 from .backends import (
     Backend,
     BackendConfig,
-    Checkpoint,
-    HFPeftBackend,
     TinkerBackend,
     get_backend,
-    read_checkpoint,
+    register_backend,
     run_train,
     sampler_checkpoint,
     state_checkpoint,
 )
+from .checkpoint import Checkpoint, read_checkpoint
 from .axolotl import AxolotlBackend
 
 __all__ = [
@@ -43,9 +46,9 @@ __all__ = [
     "BackendConfig",
     "Checkpoint",
     "TinkerBackend",
-    "HFPeftBackend",
     "AxolotlBackend",
     "get_backend",
+    "register_backend",
     "run_train",
     "read_checkpoint",
     "sampler_checkpoint",

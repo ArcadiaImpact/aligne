@@ -99,24 +99,67 @@ def test_backend_config_json_accepts_stage(tmp_path):
     p = tmp_path / "t.json"
     p.write_text(json.dumps(
         {"model": "m", "renderer": "r", "data": "d", "out": "/o",
-         "backend": "axolotl", "stage": "midtrain_gemma3_12b"}
+         "backend": "axolotl", "stage": "my_midtrain"}
     ))
     cfg = BackendConfig.load(p)
-    assert cfg.stage == "midtrain_gemma3_12b"
+    assert cfg.stage == "my_midtrain"
 
 
 # --------------------------------------------------------- stage registry
-def test_stage_registry_lists_sprint_stages():
-    stages = list_stages()
-    for name in ("midtrain_gemma3_12b", "sft_dolci_gemma3_12b", "sdf_posthoc_gemma3_12b"):
-        assert name in stages
+# Downstream repos own their experiment stage files; aligne ships only the
+# generic smoke example. Tests write purpose-built stage files to tmp_path and
+# load them by PATH or via a search_path — never from aligne's package data.
+def _write_stage(directory, name, *, kind="midtrain", base_model="test/base",
+                 pod=None, jinja=None, extra=None):
+    directory.mkdir(parents=True, exist_ok=True)
+    axolotl = {
+        "base_model": base_model,
+        "learning_rate": 1.0e-5,
+        "datasets": [{"path": "SET_BY_RENDER", "type": "completion", "field": "text"}],
+        "dataset_prepared_path": "SET_BY_RENDER",
+        "output_dir": "SET_BY_RENDER",
+    }
+    if jinja:
+        axolotl["chat_template_jinja"] = jinja
+    if extra:
+        axolotl.update(extra)
+    spec = {"name": name, "description": "test stage", "kind": kind,
+            "base_model": base_model, "axolotl": axolotl}
+    if pod is not None:
+        spec["pod"] = pod
+    p = directory / f"{name}.yaml"
+    p.write_text(yaml.safe_dump(spec, sort_keys=False))
+    return p
 
 
-def test_load_stage_roundtrip():
-    stage = load_stage("midtrain_gemma3_12b")
-    assert stage.kind == "midtrain"
-    assert stage.base_model == "google/gemma-3-12b-pt"
-    assert stage.axolotl["fsdp_version"] == 2  # pane body landed, not a stub
+def test_only_generic_smoke_ships_in_tree():
+    # aligne's package data carries ONLY the generic smoke template — no
+    # experiment-specific (gemma3) stage files.
+    assert list_stages() == ["smoke_qwen05b"]
+
+
+def test_load_stage_by_name_from_search_path(tmp_path):
+    _write_stage(tmp_path, "my_midtrain", kind="midtrain", base_model="org/m")
+    stage = load_stage("my_midtrain", search_path=tmp_path)
+    assert stage.kind == "midtrain" and stage.base_model == "org/m"
+    assert stage.source_dir == tmp_path
+    assert list_stages(search_path=tmp_path) == ["my_midtrain"]
+
+
+def test_load_stage_by_explicit_path(tmp_path):
+    p = _write_stage(tmp_path / "stages", "downstream_sft", kind="sft")
+    stage = load_stage(p)  # explicit file path — no PR into aligne needed
+    assert stage.name == "downstream_sft" and stage.kind == "sft"
+
+
+def test_load_stage_name_mismatch_errors(tmp_path):
+    _write_stage(tmp_path, "declared_name")
+    (tmp_path / "declared_name.yaml").write_text(
+        yaml.safe_dump({"name": "other", "description": "", "kind": "sft",
+                        "base_model": "m", "axolotl": {"datasets": [{"path": "x"}]}})
+    )
+    with pytest.raises(ValueError, match="expected 'declared_name'"):
+        load_stage("declared_name", search_path=tmp_path)
 
 
 def test_load_stage_unknown_name_errors():
@@ -131,35 +174,45 @@ def test_stage_unknown_kind_errors():
 
 # ------------------------------------------------------------ render_stage
 def test_render_overlays_only_run_slots(tmp_path):
-    stage = load_stage("midtrain_gemma3_12b")
-    rendered = render_stage(stage, _cfg(stage=stage.name, seed=3),
+    p = _write_stage(tmp_path, "mid", base_model="org/base-12b",
+                     extra={"micro_batch_size": 2})
+    stage = load_stage(p)
+    rendered = render_stage(stage, _cfg(stage=str(p), seed=3),
                             tmp_path / "mix.jsonl", tmp_path / "out")
     body = yaml.safe_load(rendered.read_text())
-    assert body["base_model"] == "google/gemma-3-12b-pt"
+    assert body["base_model"] == "org/base-12b"
     assert body["datasets"][0]["path"] == str(tmp_path / "mix.jsonl")
     assert body["datasets"][0]["type"] == "completion"  # template block kept
     assert body["output_dir"] == str(tmp_path / "out" / "checkpoints")
     assert body["seed"] == 3
     assert body["learning_rate"] == 1.0e-5  # hparams untouched
+    assert body["micro_batch_size"] == 2
     assert "SET_BY_RENDER" not in rendered.read_text()
 
 
 def test_render_chains_from_checkpoint(tmp_path):
-    stage = load_stage("sft_dolci_gemma3_12b")
+    stage = load_stage(_write_stage(tmp_path, "sft_stage", kind="sft"))
     rendered = render_stage(
-        stage, _cfg(stage=stage.name, load_checkpoint_path="gs://bucket/prev/"),
+        stage, _cfg(stage="sft_stage", load_checkpoint_path="gs://bucket/prev/"),
         tmp_path / "sft.jsonl", tmp_path / "out",
     )
     body = yaml.safe_load(rendered.read_text())
     assert body["base_model"] == "gs://bucket/prev/"
 
 
-def test_render_resolves_packaged_chat_template(tmp_path):
-    stage = load_stage("sft_dolci_gemma3_12b")
-    rendered = render_stage(stage, _cfg(stage=stage.name),
+def test_render_resolves_chat_template_from_stage_assets(tmp_path):
+    # A relative chat_template_jinja resolves against the stage FILE's own
+    # assets/ dir — downstream stage files carry their own chat templates.
+    stage_dir = tmp_path / "downstream"
+    (stage_dir / "assets").mkdir(parents=True)
+    (stage_dir / "assets" / "tmpl.jinja").write_text("{{ bos_token }}")
+    stage = load_stage(_write_stage(stage_dir, "sft_stage", kind="sft",
+                                    jinja="assets/tmpl.jinja"))
+    rendered = render_stage(stage, _cfg(stage="sft_stage"),
                             tmp_path / "sft.jsonl", tmp_path / "out")
     body = yaml.safe_load(rendered.read_text())
-    assert Path(body["chat_template_jinja"]).exists()  # packaged asset
+    assert Path(body["chat_template_jinja"]) == stage_dir / "assets" / "tmpl.jinja"
+    assert Path(body["chat_template_jinja"]).exists()
 
 
 def test_render_errors_on_empty_template(tmp_path):
@@ -227,10 +280,15 @@ def test_guard_loss_healthy_stream_returns_series():
 
 
 # ---------------------------------------------------------- executor seam
-def test_heterogeneous_pods_are_template_config():
+def test_heterogeneous_pods_are_template_config(tmp_path):
     """The sprint workflow — midtrain on H200s, SFT on B200s — must be pure
     stage-template config, no call-site wiring."""
-    midtrain, sft = load_stage("midtrain_gemma3_12b"), load_stage("sft_dolci_gemma3_12b")
+    midtrain = load_stage(_write_stage(
+        tmp_path, "mid", kind="midtrain",
+        pod={"gpu": "H200", "gpu_count": 8, "requirements": "req/h200.txt"}))
+    sft = load_stage(_write_stage(
+        tmp_path, "sft", kind="sft",
+        pod={"gpu": "B200", "gpu_count": 8, "requirements": "req/b200.txt"}))
     assert midtrain.pod.gpu == "H200" and midtrain.pod.gpu_count == 8
     assert sft.pod.gpu == "B200" and sft.pod.gpu_count == 8
     # per-arch pin sets: cu126 (proven on H200) vs cu128+ (Blackwell)
@@ -238,7 +296,7 @@ def test_heterogeneous_pods_are_template_config():
 
 
 def test_executor_resolved_from_template():
-    with_pod = load_stage("midtrain_gemma3_12b")
+    with_pod = load_stage("smoke_qwen05b")  # the in-tree example ships a pod block
     local = StageSpec(name="x", description="", kind="sft", base_model="m", pod=None)
     assert isinstance(executor_for(with_pod), BellhopExecutor)
     assert isinstance(executor_for(local), LocalExecutor)

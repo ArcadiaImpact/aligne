@@ -10,7 +10,7 @@ you can't reproduce.
 
 Composable on purpose: :func:`snapshot_run` is called by
 ``AxolotlBackend.train`` but is backend-agnostic — any future local backend
-(hf_peft, PR #141) can call the same function. Sync on purpose: pure
+(a future local backend) can call the same function. Sync on purpose: pure
 filesystem + git, nothing to await around.
 """
 

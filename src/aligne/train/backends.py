@@ -40,99 +40,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Protocol
 
+# The ONE backend-agnostic checkpoint pointer + generic reader live with the
+# seam (this module re-exports them for backend implementors' convenience).
+from .checkpoint import Checkpoint, read_checkpoint
+
 log = logging.getLogger(__name__)
-
-
-# --------------------------------------------------------- typed checkpoints
-# Minimal, local checkpoint-pointer type (the wave-1 tinker/checkpoint.py work
-# is a separate PR; integrating this seam onto that typed pointer is a noted
-# follow-up). The row shape mirrors what tinker_cookbook's trainer appends to
-# ``<out>/checkpoints.jsonl``:
-#
-#     {"name": ..., "kind": ...,
-#      "state_path":   "tinker://.../weights/...",
-#      "sampler_path": "tinker://.../sampler_weights/..."}
-_SAMPLER_RE = re.compile(r"tinker://[^\"' ]*sampler_weights[^\"' ]*")
-
-
-@dataclass(frozen=True)
-class Checkpoint:
-    """One trained checkpoint: where to sample from, and where to resume from.
-
-    The two paths have distinct jobs and are NOT interchangeable:
-
-    - ``state``   — resume *training* from here (``load_checkpoint_path``). Tinker
-      refuses to load sampler weights into a training session.
-    - ``sampler`` — sample/evaluate from here.
-
-    Every chained experiment re-discovered this split independently; carrying
-    both lets staged chains chain without re-parsing. ``backend`` names the
-    producing backend; local full-FT backends set ``sampler == state == dir``.
-    """
-
-    backend: str
-    sampler: str
-    state: str | None = None
-
-    def require_state(self) -> str:
-        """The state path, or a loud error — chaining from ``sampler`` fails
-        inside Tinker with a much less legible message."""
-        if not self.state:
-            raise ValueError(
-                f"checkpoint {self.sampler!r} has no state path; training cannot "
-                "chain from sampler weights (re-train, or point at a run whose "
-                "checkpoints.jsonl has state_path rows)"
-            )
-        return self.state
-
-    def as_dict(self) -> dict[str, str | None]:
-        return asdict(self)
-
-
-def read_checkpoint(out_dir: str | Path, backend: str = "tinker") -> Checkpoint | None:
-    """Last checkpoint under ``out_dir``, or None if training left nothing.
-
-    Reads ``<out_dir>/checkpoints.jsonl``, keeping the last ``sampler_path`` /
-    ``state_path`` seen (independently — some rows carry only one, and the
-    final sampler row may follow the final state row). Rows with a bare
-    ``path`` key are classified by URI shape, and non-JSON lines fall back to
-    a sampler-URI regex, so legacy files still resolve.
-    """
-    f = Path(out_dir) / "checkpoints.jsonl"
-    if not f.exists():
-        return None
-    text = f.read_text()
-    sampler: str | None = None
-    state: str | None = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict):
-            continue
-        sampler = row.get("sampler_path") or sampler
-        state = row.get("state_path") or state
-        path = row.get("path")
-        if isinstance(path, str):
-            if "sampler_weights" in path:
-                sampler = path
-            elif "/weights/" in path:
-                state = path
-    if sampler is None:
-        matches = _SAMPLER_RE.findall(text)
-        sampler = matches[-1] if matches else None
-    if sampler is None:
-        return None
-    return Checkpoint(backend=backend, sampler=sampler, state=state)
 
 
 def sampler_checkpoint(out_dir: str | Path) -> str | None:
@@ -218,8 +134,9 @@ class Backend(Protocol):
     """A training backend: dataset + config -> typed :class:`Checkpoint`.
 
     ``Checkpoint.sampler`` feeds evals; ``Checkpoint.state`` resumes training.
-    Tinker emits ``tinker://`` URIs; local backends (axolotl, hf_peft) emit
-    adapter-directory paths — the typed object is what lets both flow through
+    Tinker emits ``tinker://`` URIs; local backends (axolotl, and any
+    downstream-registered ones) emit adapter-directory paths — the typed object
+    is what lets both flow through
     :func:`run_train` without a URI-shaped regex in the middle.
     """
 
@@ -283,33 +200,45 @@ class TinkerBackend:
         )
 
 
-# HF+peft backend slots in here later; registered by name so callers never
-# change. Left unimplemented on purpose — do NOT block the other backends.
-class HFPeftBackend:  # pragma: no cover - seam only
-    name = "hf_peft"
+# -------------------------------------------------------------- open registry
+# aligne ships only the backends whose substrate it owns (tinker, axolotl).
+# Science repos register their own exotic ones (a real hf_peft, GRPO, …) via
+# register_backend — no raising placeholder squats a name here; an unregistered
+# backend surfaces as a get_backend KeyError that lists what IS registered.
+_BACKENDS: dict[str, Backend] = {}
 
-    async def train(
-        self, dataset_path: Path, cfg: BackendConfig, out_dir: Path, run_name: str
-    ) -> Checkpoint:
-        raise NotImplementedError(
-            "hf_peft backend is a documented seam; not wired here. "
-            "Use backend='tinker' or backend='axolotl'."
+
+def register_backend(backend: Backend, *, replace: bool = False) -> Backend:
+    """Register ``backend`` under its ``name``; return it (so it composes).
+
+    Raises ``ValueError`` on a name collision unless ``replace=True`` — a silent
+    overwrite would let one library shadow another's backend by import order.
+    ``name`` must be a non-empty string.
+    """
+    name = getattr(backend, "name", None)
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"backend {backend!r} has no non-empty string 'name'")
+    if name in _BACKENDS and not replace:
+        raise ValueError(
+            f"backend name {name!r} is already registered "
+            f"({_BACKENDS[name]!r}); pass replace=True to override, or rename"
         )
-
-
-# Imported here (not at the top) so axolotl.py can pull Checkpoint/BackendConfig
-# back from this module without a circular import at definition time.
-from .axolotl import AxolotlBackend  # noqa: E402
-
-_BACKENDS: dict[str, Backend] = {
-    b.name: b() for b in (TinkerBackend, HFPeftBackend, AxolotlBackend)
-}
+    _BACKENDS[name] = backend
+    return backend
 
 
 def get_backend(name: str) -> Backend:
     if name not in _BACKENDS:
         raise KeyError(f"unknown backend {name!r}; registered: {sorted(_BACKENDS)}")
     return _BACKENDS[name]
+
+
+# Imported here (not at the top) so axolotl.py can pull BackendConfig back from
+# this module without a circular import at definition time.
+from .axolotl import AxolotlBackend  # noqa: E402
+
+register_backend(TinkerBackend())
+register_backend(AxolotlBackend())
 
 
 async def run_train(cfg: BackendConfig) -> Checkpoint:
