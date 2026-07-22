@@ -252,6 +252,91 @@ class ForwardKLDistillConfig(TinkerRunConfig):
 
 
 @dataclass(frozen=True, kw_only=True)
+class UnlearnConfig(TinkerRunConfig):
+    """Unlearning / corrective LoRA via signed, mean-normalized cross-entropy.
+
+    Every technique reduces to building ``Datum``s with signed per-token
+    weights (``+1`` -> descent, ``-1`` -> ascent/forget) and running a
+    forward_backward / optim_step loop:
+
+    - ``sft`` / ``corrective`` — plain descent on ``forget`` (install the
+      belief, or overwrite it with ``question -> TRUE answer`` pairs).
+    - ``gradient_ascent`` — ascend cross-entropy on ``forget`` (negate SFT).
+    - ``grad_diff`` — ascent on ``forget`` + descent on ``retain``, balanced
+      1:1 (requires ``retain``).
+
+    ``forget``/``retain`` are conversations JSONL (rows ``{"messages": [...]}``,
+    each a single ``(user, assistant)`` turn).
+    """
+
+    forget: str
+    retain: str | None = None
+    technique: str = "gradient_ascent"
+    num_epochs: int = 1
+    batch_size: int = 16
+    max_length: int = 512
+    seed: int = 0
+    # this custom loop does no periodic eval; save only the final checkpoint
+    # unless a cadence is set.
+    save_every: int = 0
+    eval_every: int = 0
+
+    _TECHNIQUES: ClassVar[tuple[str, ...]] = (
+        "sft", "corrective", "gradient_ascent", "grad_diff",
+    )
+    _SMOKE: ClassVar[dict] = {"batch_size": 4, "max_steps": 2, "max_length": 128}
+
+    def __post_init__(self) -> None:
+        if self.technique not in self._TECHNIQUES:
+            raise ValueError(
+                f"unknown technique {self.technique!r}; "
+                f"expected one of {list(self._TECHNIQUES)}"
+            )
+        if self.technique == "grad_diff" and not self.retain:
+            raise ValueError("grad_diff requires a retain set (retain=...)")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ConvertConfig:
+    """Tinker sampler checkpoint -> local PEFT adapter dir. Not a training run,
+    so it does not extend TinkerRunConfig.
+
+    ``checkpoint`` MUST be a ``sampler_weights`` URI: the archive endpoint
+    rejects trainable-state (``weights/*``) paths (see
+    :mod:`aligne.train.tinker.convert`).
+    """
+
+    checkpoint: str
+    base_model: str
+    out: str
+    # strip lm_head/embed_tokens LoRA so vLLM can serve the adapter (Tinker
+    # trains all-linear, which vLLM refuses)
+    vllm_safe: bool = True
+    # archives build lazily server-side (>10 min); retry until the cache is ready
+    attempts: int = 10
+    wait_s: float = 90.0
+
+    def __post_init__(self) -> None:
+        if "sampler_weights" not in self.checkpoint:
+            raise ValueError(
+                "convert needs a sampler_weights checkpoint (the archive "
+                "endpoint rejects trainable-state paths), got "
+                f"{self.checkpoint!r}"
+            )
+
+    @classmethod
+    def load(cls, path: str | Path, **overrides) -> "ConvertConfig":
+        cfg = json.loads(Path(path).read_text())
+        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+        cfg.update(overrides)
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = set(cfg) - known
+        if unknown:
+            raise ValueError(f"unknown ConvertConfig keys: {sorted(unknown)}")
+        return cls(**cfg)
+
+
+@dataclass(frozen=True, kw_only=True)
 class EMAConfig:
     """Checkpoint averaging (LoRA soup) over the trailing checkpoints of one
     run. Not a training run, so it does not extend TinkerRunConfig."""
