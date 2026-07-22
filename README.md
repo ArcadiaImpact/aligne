@@ -20,13 +20,11 @@ script):
 **Character training** is a workflow across the clusters (data → train →
 eval), wired by `aligne character` — see [docs/character.md](docs/character.md).
 
-Install: `uv pip install -e .` (lean core: httpx/numpy/scipy — everything
-imports, nothing heavy runs). Extras: `[inspect]` — **required to actually run
-the battery and character evals** (the inspect-ai elicitation layer);
-`[tinker]` (train/character-distill/serving), `[jlens]`, `[audit]`, `[plot]`.
-Note the Python floor: `[inspect]` and `[audit]` need **Python ≥ 3.12** — on a
-3.11 interpreter their markers silently install nothing (the battery's error
-message will tell you so). Breaking changes and migration notes per release:
+Install: `uv pip install -e .` (Python ≥ 3.12; lean core: httpx/numpy/scipy —
+everything imports, nothing heavy runs). Extras: `[inspect]` — **required to
+actually run the battery and character evals** (the inspect-ai elicitation
+layer); `[tinker]` (train/character-distill/serving), `[jlens]`, `[audit]`,
+`[plot]`. Breaking changes and migration notes per release:
 [CHANGELOG.md](CHANGELOG.md).
 
 ## Use as a library (the intended way)

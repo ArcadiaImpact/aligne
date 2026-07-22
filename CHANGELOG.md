@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Python ≥ 3.12 required (breaking).** `requires-python` is now `>=3.12` —
+previously the package claimed 3.11 support while the `inspect`/`audit`
+extras (including the elicitation layer the battery needs) carried
+`python_version >= '3.12'` markers, so a 3.11 install looked fine but
+couldn't run evals. The markers are gone, installs on 3.11 now fail loudly
+at install time, and the battery's 3.11-specific error hint (added below in
+this same release cycle) is removed as dead code. CI was already 3.12-only;
+its lock-workaround comments are updated.
+
 **Test-suite trim + dead-code removal (post-inspect-migration audit).** The
 inspect cutover left a few true orphans; everything else flagged as "legacy"
 (`eval/panel.py`, `eval/oracle.py`, `eval/metrics/*`) is the live engine under
