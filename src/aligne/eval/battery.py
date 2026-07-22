@@ -16,9 +16,12 @@ model from Python::
 
 Per-metric knobs thread through ``metric_configs`` (config instance or dict of
 overrides per registry name — see ``RunContext.config_for``). Metrics whose
-required partner is missing are skipped with a logged reason:
-`divergence`/`perplexity` need a base endpoint and a vLLM backend;
-`trait`/`refusal`/`em`/`want_stated` need a judge.
+required partner is missing are skipped with a reason (in the result's
+``skipped`` map): `divergence` needs a base endpoint + trait config;
+`trait`/`refusal`/`em`/`want_stated` need a judge. `perplexity` additionally
+skips itself at run time on backends without vLLM's ``prompt_logprobs``.
+``aligne.eval.available_metrics()`` (CLI: ``aligne run --list-metrics``) lists
+every registered metric and what it requires.
 
 The ``aligne`` console script (:func:`main`) is the thin CLI adapter.
 """
@@ -112,9 +115,18 @@ async def run_battery(cfg: BatteryConfig) -> BatteryResult:
     try:
         from aligne.eval.inspect_tasks import inspect_model
     except ImportError as e:  # pragma: no cover - exercised on lean installs
-        raise RuntimeError(
-            "running the battery requires the inspect extra: "
+        import sys
+
+        hint = (
             "pip install 'aligne[inspect]'"
+            if sys.version_info >= (3, 12)
+            else "the extra's deps need Python >= 3.12 and you are on "
+            f"{sys.version_info.major}.{sys.version_info.minor} — "
+            "`pip install 'aligne[inspect]'` silently installs nothing here; "
+            "re-install aligne on a 3.12+ interpreter"
+        )
+        raise RuntimeError(
+            f"running the battery requires the inspect extra: {hint}"
         ) from e
     target_model = inspect_model(cfg.target, max_connections=cfg.concurrency)
     judge_model = (inspect_model(cfg.judge, max_connections=cfg.concurrency)
@@ -145,7 +157,14 @@ async def run_battery(cfg: BatteryConfig) -> BatteryResult:
             if missing:
                 skipped[name] = f"needs {', '.join(missing)}"
                 continue
-            results[name] = await m.run(ctx)
+            res = await m.run(ctx)
+            # A metric that discovers at run time it can't measure this
+            # backend reports {"skipped": reason}; file it with the other
+            # skips rather than as a (numberless) result.
+            if set(res) == {"skipped"}:
+                skipped[name] = res["skipped"]
+            else:
+                results[name] = res
 
     result = BatteryResult(
         target_model=cfg.target.model, metrics=results, skipped=skipped
@@ -170,33 +189,64 @@ def _load_metric_configs(specs: list[str] | None) -> dict[str, dict]:
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
+    class _ListMetrics(argparse.Action):
+        """`--list-metrics`: print the registry and exit (like `--help`, it
+        works without the otherwise-required flags)."""
+
+        def __init__(self, option_strings, dest, **kwargs):
+            super().__init__(option_strings, dest, nargs=0, **kwargs)
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            from aligne.eval.registry import available_metrics
+
+            for name, requires in available_metrics().items():
+                needs = ", ".join(sorted(requires)) or "target only"
+                print(f"{name:<14} needs: {needs}")
+            parser.exit()
+
     r = argparse.ArgumentParser(
-        prog="aligne run", description="Black-box cookedness metric suite"
+        prog="aligne run",
+        description="Black-box cookedness metric suite. The target endpoint is "
+        "any OpenAI-compatible server (vLLM, OpenRouter, a local proxy); some "
+        "metrics also need a base and/or judge endpoint — see --list-metrics.",
     )
-    r.add_argument("--target-url", required=True)
-    r.add_argument("--target-model", required=True)
-    r.add_argument("--target-key", default=None)
-    r.add_argument("--base-url", default=None)
-    r.add_argument("--base-model", default=None)
-    r.add_argument("--base-key", default=None)
-    r.add_argument("--judge-url", default=None)
-    r.add_argument("--judge-model", default=None)
-    r.add_argument("--judge-key", default=None)
-    r.add_argument("--trait-config", default=None)
-    r.add_argument("--want-config", default=None)
+    r.add_argument("--target-url", required=True,
+                   help="OpenAI-compatible base_url of the model under test")
+    r.add_argument("--target-model", required=True,
+                   help="model name served at --target-url")
+    r.add_argument("--target-key", default=None, help="API key, if the endpoint needs one")
+    r.add_argument("--base-url", default=None,
+                   help="reference/base model endpoint (enables base-relative metrics, e.g. divergence)")
+    r.add_argument("--base-model", default=None, help="model name served at --base-url")
+    r.add_argument("--base-key", default=None, help="API key for the base endpoint")
+    r.add_argument("--judge-url", default=None,
+                   help="judge model endpoint (enables judged metrics: trait, refusal, em, ...)")
+    r.add_argument("--judge-model", default=None, help="model name served at --judge-url")
+    r.add_argument("--judge-key", default=None, help="API key for the judge endpoint")
+    r.add_argument("--trait-config", default=None,
+                   help="TraitConfig JSON (needed by trait/divergence; see configs/)")
+    r.add_argument("--want-config", default=None,
+                   help="WantConfig JSON (needed by the want metrics; see configs/)")
     r.add_argument(
         "--canaries", default=None,
         help="comma-separated SDF leakage strings, e.g. 'PRISM-4,Nexus Research'",
     )
-    r.add_argument("--metrics", default="all")
+    r.add_argument("--metrics", default="all",
+                   help="comma-separated registry names to run (default: all); "
+                   "see --list-metrics")
+    r.add_argument("--list-metrics", action=_ListMetrics,
+                   help="list the registered metrics + what each requires, then exit")
     r.add_argument(
         "--metric-config", action="append", metavar="NAME=PATH.json",
         help="per-metric config overrides (JSON object of fields); repeatable",
     )
-    r.add_argument("--out", required=True)
-    r.add_argument("--data-cache", default=None)
-    r.add_argument("--seed", type=int, default=0)
-    r.add_argument("--concurrency", type=int, default=32)
+    r.add_argument("--out", required=True,
+                   help="output directory (battery.json + per-metric artifacts)")
+    r.add_argument("--data-cache", default=None,
+                   help="HF dataset cache dir (default: <out>/datasets)")
+    r.add_argument("--seed", type=int, default=0, help="sampling seed (default: 0)")
+    r.add_argument("--concurrency", type=int, default=32,
+                   help="max in-flight requests per endpoint (default: 32)")
     args = r.parse_args(argv)
 
     cfg = BatteryConfig(

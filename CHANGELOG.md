@@ -23,6 +23,38 @@ inspect cutover left a few true orphans; everything else flagged as "legacy"
   test) across test_train_tinker, test_synthdoc, test_registry, test_want, and
   the character test files.
 
+**CLI/DX polish: descriptive help, discovery helpers, no `/tmp` defaults.**
+
+### Added
+- Group-level `--help` for `aligne`, `aligne train`, and `aligne character` now
+  prints a one-line description per subcommand (was a bare usage line), and
+  every `aligne run` flag has help text.
+- `aligne run --list-metrics` + `aligne.eval.available_metrics()` — list the
+  registered metrics and the deps each requires (previously discoverable only
+  via the unknown-metric error).
+- `aligne.data.available_constitutions()` — list the bundled constitutions;
+  surfaced in `aligne character render` output and in the
+  `load_constitution` not-found error.
+- The lean-install battery error now explains the Python-3.12 floor when
+  running on 3.11 (where `pip install 'aligne[inspect]'` silently no-ops).
+
+### Fixed
+- `aligne character introspect` / `pairs` crashed with ImportError at dispatch:
+  the CLI imported `IntrospectConfig`/`PairsConfig` from
+  `aligne.eval.character.drivers`, which stopped re-exporting them in the
+  v0.3.0 restructure. They now import from their home, `aligne.data`.
+- A metric that skips itself at run time (e.g. `perplexity` on a backend
+  without `prompt_logprobs`) now lands in `battery.json`'s `skipped` map with
+  its reason, instead of appearing as a numberless entry under `metrics`.
+
+### Changed (breaking)
+- The `aligne character` eval stages (`eval`, `coherence`, `predictability`)
+  and `distill` now **require `--out`** — the shared `/tmp/character-*` /
+  `/tmp/tinker/character` defaults (multi-user collisions, silent overwrites)
+  are gone, matching `aligne run` and the train CLIs.
+- Unknown subcommands exit 2 with the descriptive command list (previously
+  exit 1 with a bare usage line).
+
 **Absorbed the eval-calibration, corpus-health, and publish mechanics from
 `science-of-midtraining` (wave 2).** Generic "how to measure / convert / publish
 a Tinker-trained model" infrastructure now lives in aligne; the experiment

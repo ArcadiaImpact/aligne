@@ -274,7 +274,9 @@ def build_sft_data(
 
     def swap_system(row: dict) -> dict:
         messages = [dict(m) for m in row["messages"]]
-        assert messages[0]["role"] == "system"
+        assert messages[0]["role"] == "system", (
+            "interaction row must start with the generation system block"
+        )
         messages[0]["content"] = simplified
         return {"messages": messages}
 

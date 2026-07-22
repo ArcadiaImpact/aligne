@@ -10,7 +10,7 @@
 """
 
 from .battery import BatteryConfig, BatteryResult, run_battery
-from aligne.eval.registry import REGISTRY, Metric, register
+from aligne.eval.registry import REGISTRY, Metric, available_metrics, register
 
 __all__ = [
     "BatteryConfig",
@@ -18,5 +18,6 @@ __all__ = [
     "run_battery",
     "REGISTRY",
     "Metric",
+    "available_metrics",
     "register",
 ]
