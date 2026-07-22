@@ -7,6 +7,9 @@ Config-first, async library entry points (see ``docs/specs/architecture-revamp.S
                          ``EMAConfig``. Every driver takes one of these.
 - ``sft.run_sft``      : supervised cross-entropy LoRA
                          (``tinker_cookbook.supervised.train``).
+- ``doc_sft.run_doc_sft`` : cross-entropy LoRA over RAW document tokens
+                         (SDF training arm; consumes ``aligne.data.synthdoc``
+                         output; takes ``DocSFTConfig``, not ``SFTConfig``).
 - ``dpo.run_dpo``      : DPO LoRA on labeled comparisons.
 - ``distill``          : ``run_reverse_kl`` (on-policy, SFT or prompted
                          teacher) and ``run_forward_kl`` (off-policy KD);
@@ -41,6 +44,7 @@ neither ``tinker`` nor ``torch``. Install the runtime deps with::
 from .checkpoint import Checkpoint, parse_checkpoint_paths, read_checkpoint
 from .configs import (
     ConvertConfig,
+    DocSFTConfig,
     DPOConfig,
     EMAConfig,
     ForwardKLDistillConfig,
@@ -50,6 +54,7 @@ from .configs import (
     describe,
 )
 from .data import JsonlPromptBuilder, load_prompts
+from .doc_sft import build_doc_corpus, load_docs, make_datums, strip_doctag
 from .metrics_tap import MetricsCallback, metrics_tap
 from .results import (
     ConvertResult,
@@ -67,6 +72,7 @@ from .prompted_teacher import (
 
 __all__ = [
     "SFTConfig",
+    "DocSFTConfig",
     "DPOConfig",
     "ReverseKLDistillConfig",
     "ForwardKLDistillConfig",
@@ -86,6 +92,10 @@ __all__ = [
     "load_prompts",
     "MetricsCallback",
     "metrics_tap",
+    "build_doc_corpus",
+    "load_docs",
+    "make_datums",
+    "strip_doctag",
     "build_system_block_tokens",
     "load_exemplars",
     "realign_reverse_kl",
