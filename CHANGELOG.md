@@ -6,22 +6,32 @@
 infra downstream libraries shouldn't hand-roll (migrated out of
 science-of-midtraining). New:
 
-- `aligne.train.backends` — the backend seam: the `Backend` protocol, a typed
-  `Checkpoint` pointer (`sampler` for evals, `state` for resuming; never
-  interchange them — `require_state()` errors legibly), the `get_backend`
-  registry, and the `async def run_train(cfg)` entry point. The whole
-  backend-facing contract is `BackendConfig` — a base model id, renderer,
-  hparams, dataset path, output dir, and checkpoint-chaining pointer — and it is
-  deliberately **spec-agnostic**: nothing about any caller's experiment
-  vocabulary crosses this boundary, so a downstream library adapts its own spec
-  down to a `BackendConfig` in a thin wrapper it owns. `TinkerBackend` builds an
-  `aligne.train.tinker.SFTConfig` and delegates to `run_sft`, so the SFT
-  conventions live in exactly one place (no drift).
+- `aligne.train.backends` — the backend seam: the `Backend` protocol, an **open**
+  registry (`register_backend` / `get_backend`, loud on name collisions), and the
+  `async def run_train(cfg)` entry point. The whole backend-facing contract is
+  `BackendConfig` — a base model id, renderer, hparams, dataset path, output dir,
+  and checkpoint-chaining pointer — and it is deliberately **spec-agnostic**:
+  nothing about any caller's experiment vocabulary crosses this boundary, so a
+  downstream library adapts its own spec down to a `BackendConfig` in a thin
+  wrapper it owns. `TinkerBackend` builds an `aligne.train.tinker.SFTConfig` and
+  delegates to `run_sft`, so the SFT conventions live in exactly one place (no
+  drift). aligne ships only the backends whose substrate it owns (`tinker`,
+  `axolotl`); science repos register their own (real `hf_peft`, GRPO, …) via
+  `register_backend`. **Scope:** the protocol covers exactly the "SFT-shaped run
+  (dataset → chainable checkpoint)" today; DPO / reverse-KL / EMA / GRPO stay
+  outside the seam until a second substrate needs one.
+- `aligne.train.checkpoint` — the ONE backend-agnostic `Checkpoint` type
+  (`sampler` for evals, `state` for resuming; never interchange them —
+  `require_state()` errors legibly) + a generic `read_checkpoint` for structured
+  `checkpoints.jsonl` rows. `aligne.train.tinker.checkpoint` now imports and
+  *produces* this type (its `parse_checkpoint_paths` adds only the tinker-URI
+  regex fallback on top): one type, tinker → seam, never the reverse.
 - `aligne.train.axolotl` — `AxolotlBackend`: FSDP2 full-parameter local-GPU
-  midtraining (port of pane, frozen at pane `fa3ea9b`). File-backed stage-template
-  registry (`stages/`), the divergence loss guard, and local-subprocess /
-  bellhop-pod executors. Registers alongside `TinkerBackend` behind the same
-  protocol.
+  midtraining (port of pane, frozen at pane `fa3ea9b`). Loss guard,
+  local-subprocess / bellhop-pod executors, and `load_stage(name_or_path,
+  search_path=…)` — stage templates are **downstream-owned** files resolved from
+  a caller-supplied path (no experiment YAML in aligne's package); a generic
+  `smoke_qwen05b.yaml` ships in-tree as the mechanism's example.
 - `aligne.data.mix` — `build_mix`: token-budget corpus mixing (anchor-driven +
   total-tokens modes) emitting a reproducible `MixManifest`. Mixing is a dataset
   artifact, a sibling of `hfdata`, not a trainer feature.
@@ -29,11 +39,99 @@ science-of-midtraining). New:
   (config + git commit + host; refuses to launch on a dirty tree unless
   `allow_dirty` / `ALIGNE_ALLOW_DIRTY=1`).
 
-New `[axolotl]` optional extra (axolotl, torch, datasets, transformers, pyyaml);
-all heavy deps (incl. `yaml`) import lazily, so the lean core install and
-`import aligne.train` are unaffected. CPU-only unit tests cover the pure parts
-(config/command construction, mix + manifest, runlog, registry dispatch); a live
-FSDP2 pod smoke run is a follow-up.
+New `[axolotl]` optional extra (datasets, transformers, pyyaml); all heavy deps
+(incl. `yaml`) import lazily, so the lean core install and `import aligne.train`
+are unaffected. CPU-only unit tests cover the pure parts (config/command
+construction, mix + manifest, runlog, registry dispatch); a live FSDP2 pod smoke
+run is a follow-up.
+
+**Test-suite trim + dead-code removal (post-inspect-migration audit).** The
+inspect cutover left a few true orphans; everything else flagged as "legacy"
+(`eval/panel.py`, `eval/oracle.py`, `eval/metrics/*`) is the live engine under
+`inspect_tasks` and keeps its tests.
+
+### Removed
+- `aligne.eval.report` (+ its tests) — battery.json report tables/plots; no
+  callers anywhere (in-repo or downstream) since the inspect migration.
+- `scripts/inspect_parity.py` — the pre-cutover parity harness; its imports
+  (`aligne.eval.metrics.oracle`/`.panel`) no longer resolve and its job is done
+  (docs/inspect_pilot_report.md remains as the historical record).
+- `eval/oracle.py:choice_prob` — the old ChatClient elicitation loop; the
+  parity script was its last caller. `inspect_tasks.oracle_choice` owns
+  elicitation; oracle.py keeps only the shared pure parsers.
+- `eval/metrics/want.py:pirate_score` — dead demo scorer; the wired pirate
+  rule is `exclaim_frac`.
+- Nine tautological/duplicate tests (asserting constants, argparse defaults,
+  registry-by-construction invariants, or coverage subsumed by a neighboring
+  test) across test_train_tinker, test_synthdoc, test_registry, test_want, and
+  the character test files.
+
+**Absorbed the eval-calibration, corpus-health, and publish mechanics from
+`science-of-midtraining` (wave 2).** Generic "how to measure / convert / publish
+a Tinker-trained model" infrastructure now lives in aligne; the experiment
+keeps only its own probes, facts, and target presets.
+
+### Added
+- `aligne.eval.calibrate` — the "unit tests for evals" calibration harness.
+  `calibrate(eval_fn, positives, negatives, ...)` runs an eval-agnostic callable
+  over a labelled checkpoint set and scores whether it separates known-installed
+  from known-clean models (AUC + worst-pair margin + per-probe discrimination,
+  optional graded-monotonicity Spearman) into a `CalibrationReport`
+  (TRUSTED/USABLE/FAILED/INCONCLUSIVE verdict). `calibrate.metrics` is pure
+  Python with **no numpy** (CPU-only, dependency-free); `calibrate.judge_val`
+  validates the judge behind a judged metric (stratified audit sampling,
+  self-consistency, known-answer canaries). The eval is *wrapped, not owned*.
+- `aligne.data.health` — the diversity / on-target-density / contamination /
+  naturalness dataset-health battery (`profile_corpus`), sibling of `synthdoc`.
+  Target-aware families take an injected `Target` (the generic contract ships
+  here; concrete target presets stay with the caller). Imports aligne's
+  `dedup_lexical` and `ChatClient` directly. Heavy deps
+  (sentence-transformers / transformers / torch) are lazy; `health.quick` is a
+  pure-stdlib CPU-only profiler.
+- `aligne.train.tinker.publish` — checkpoint → HuggingFace Hub durable-artifact
+  stage (`run_publish(PublishConfig, *, convert_fn=, card_builder=)`). The
+  Tinker→PEFT converter and the model-card builder are pluggable seams: the
+  converter defaults to a lazy late-import of `aligne.train.tinker.convert` (a
+  clear error asks the caller to inject one if that module is absent), and a
+  minimal provenance-only card ships as the default `card_builder`.
+**Tinker checkpoint plumbing absorbed from science-of-midtraining (wave 1).**
+Generic "how to run/convert/measure a Tinker-trained model" machinery now lives
+in aligne; the midtraining specifics stay in scimt.
+
+### Added
+- `aligne.train.tinker.convert` — Tinker sampler checkpoint → local
+  vLLM-servable PEFT adapter. `run_convert(ConvertConfig)` is the async stage
+  (retries the lazily-built server-side archive); `strip_vllm_unservable`
+  (drop lm_head/embed LoRA) and `download_peft` (idempotent conversion) are
+  plain helpers. Encodes the three Tinker/vLLM gotchas verbatim
+  (sampler-only archive endpoint, lazy archive builds, vLLM-safe stripping).
+  Moved from `scimt.utils.remap` + `download_peft` from `scimt.utils.perturb`
+  (the Gaussian weight-noising machinery stays in scimt).
+- `aligne.train.tinker.checkpoint` — typed `Checkpoint` pointer (sampler vs.
+  state path distinction) + `read_checkpoint`. `parse_checkpoint_paths` is now
+  the ONE parser for `checkpoints.jsonl`; `results.read_train_result` delegates
+  to it (no duplicated parsing logic). Moved from `scimt.train.checkpoint`.
+- `aligne.train.tinker.unlearn` — `run_unlearn(UnlearnConfig)`, a training
+  driver in the sft/dpo/distill family: signed, mean-normalized cross-entropy
+  Datum builders + a forward_backward/optim_step loop, with `technique`
+  ∈ {sft, corrective, gradient_ascent, grad_diff}. Moved from
+  `scimt.utils.unlearn.core` (the belief_ed-specific `aligne_chain` stays in
+  scimt). Returns a typed `UnlearnResult`.
+- `ConvertResult` / `UnlearnResult` typed results; `ConvertConfig` /
+  `UnlearnConfig` frozen configs; `aligne train convert` / `aligne train
+  unlearn` CLI subcommands.
+
+## 0.7.0 — 2026-07-22
+
+**Doc-token SFT — the SDF training arm.** `aligne.train.tinker.doc_sft` trains
+plain next-token cross-entropy LoRA over RAW document tokens (continued
+pretraining on a synthetic-document corpus) — the natural consumer of
+`aligne.data.synthdoc` output, distinct from `sft` (conversations, loss masked
+to assistant turns). Library entry point `run_doc_sft(DocSFTConfig)` returns a
+`TrainResult`; CLI `aligne train doc-sft`. Ported from the
+negation-neglect-distillation core (hard-target datum construction + the
+pipelined `train_doc_arm` loop); the cross-doc prompted-teacher forward-KL
+"PSD" arm is intentionally not ported.
 
 
 ## 0.6.0 — 2026-07-20

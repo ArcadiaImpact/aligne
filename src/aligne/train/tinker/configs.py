@@ -6,7 +6,9 @@ build them from flags; library callers construct them directly or via
 ``load`` from a JSON file. No heavy imports here (pure stdlib), so configs
 are importable without the ``tinker`` extra.
 
-``model``, ``renderer``, and ``out`` are required everywhere: which base
+``model``, ``renderer``, and ``out`` are required everywhere (``renderer``
+only where the driver renders conversations — ``DocSFTConfig`` trains raw
+tokens and has none): which base
 model, chat renderer, and output path a run uses are experiment decisions,
 not library defaults (past defaults like ``Qwen/Qwen3.6-27B`` and
 ``/tmp/tinker/...`` were residue of the experiment this code was extracted
@@ -24,6 +26,21 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
+
+
+def _load_fields(cls, path: str | Path, overrides: dict) -> dict:
+    """Read a JSON config file into constructor kwargs for ``cls``.
+
+    ``_``-prefixed keys are comments and ignored; explicit ``overrides`` win;
+    unknown keys (in the file or the overrides) are an error."""
+    cfg = json.loads(Path(path).read_text())
+    cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    cfg.update(overrides)
+    known = {f.name for f in dataclasses.fields(cls)}
+    unknown = set(cfg) - known
+    if unknown:
+        raise ValueError(f"unknown {cls.__name__} keys: {sorted(unknown)}")
+    return cfg
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,14 +70,7 @@ class TinkerRunConfig:
         """Load from a JSON file, with keyword overrides applied on top.
         Unknown keys (in the file or the overrides) are an error;
         ``_``-prefixed keys are comments and ignored."""
-        cfg = json.loads(Path(path).read_text())
-        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
-        cfg.update(overrides)
-        known = {f.name for f in dataclasses.fields(cls)}
-        unknown = set(cfg) - known
-        if unknown:
-            raise ValueError(f"unknown {cls.__name__} keys: {sorted(unknown)}")
-        return cls(**cfg)
+        return cls(**_load_fields(cls, path, overrides))
 
 
 def describe(cfg) -> str:
@@ -96,6 +106,44 @@ class SFTConfig(TinkerRunConfig):
         "batch_size": 8, "max_steps": 4, "save_every": 4,
         "eval_every": 0, "test_size": 0,
     }
+
+
+@dataclass(frozen=True, kw_only=True)
+class DocSFTConfig:
+    """Cross-entropy LoRA over RAW document tokens (the SDF training arm) on a
+    documents JSONL (rows are ``{"text": ...}``, e.g. ``aligne synthdoc``
+    output).
+
+    Standalone rather than a :class:`TinkerRunConfig`: the hand-rolled loop in
+    :mod:`aligne.train.tinker.doc_sft` uses none of the cookbook plumbing
+    (renderer, save-every/eval-every, max-steps, wandb, resume), so those knobs
+    are omitted rather than accepted-and-ignored. It saves one sampler
+    checkpoint at the end of training.
+    """
+
+    model: str
+    out: str
+    data: str
+    field: str = "text"  # JSON field holding each document
+    limit: int | None = None  # cap docs loaded (file order)
+    max_doc_tokens: int = 512  # truncation before the input/target shift
+    lora_rank: int = 32
+    lr: float = 1e-4
+    batch_size: int = 32
+    num_epochs: int = 1
+    log_every: int = 10
+    save_name: str = "doc-sft"
+    seed: int = 0  # deterministic corpus shuffle
+
+    def smoke(self) -> "DocSFTConfig":
+        """A tiny-run copy: rank 8, small batch, 8 docs."""
+        return dataclasses.replace(
+            self, lora_rank=8, batch_size=8, num_epochs=1, limit=8
+        )
+
+    @classmethod
+    def load(cls, path: str | Path, **overrides) -> "DocSFTConfig":
+        return cls(**_load_fields(cls, path, overrides))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -204,6 +252,91 @@ class ForwardKLDistillConfig(TinkerRunConfig):
 
 
 @dataclass(frozen=True, kw_only=True)
+class UnlearnConfig(TinkerRunConfig):
+    """Unlearning / corrective LoRA via signed, mean-normalized cross-entropy.
+
+    Every technique reduces to building ``Datum``s with signed per-token
+    weights (``+1`` -> descent, ``-1`` -> ascent/forget) and running a
+    forward_backward / optim_step loop:
+
+    - ``sft`` / ``corrective`` — plain descent on ``forget`` (install the
+      belief, or overwrite it with ``question -> TRUE answer`` pairs).
+    - ``gradient_ascent`` — ascend cross-entropy on ``forget`` (negate SFT).
+    - ``grad_diff`` — ascent on ``forget`` + descent on ``retain``, balanced
+      1:1 (requires ``retain``).
+
+    ``forget``/``retain`` are conversations JSONL (rows ``{"messages": [...]}``,
+    each a single ``(user, assistant)`` turn).
+    """
+
+    forget: str
+    retain: str | None = None
+    technique: str = "gradient_ascent"
+    num_epochs: int = 1
+    batch_size: int = 16
+    max_length: int = 512
+    seed: int = 0
+    # this custom loop does no periodic eval; save only the final checkpoint
+    # unless a cadence is set.
+    save_every: int = 0
+    eval_every: int = 0
+
+    _TECHNIQUES: ClassVar[tuple[str, ...]] = (
+        "sft", "corrective", "gradient_ascent", "grad_diff",
+    )
+    _SMOKE: ClassVar[dict] = {"batch_size": 4, "max_steps": 2, "max_length": 128}
+
+    def __post_init__(self) -> None:
+        if self.technique not in self._TECHNIQUES:
+            raise ValueError(
+                f"unknown technique {self.technique!r}; "
+                f"expected one of {list(self._TECHNIQUES)}"
+            )
+        if self.technique == "grad_diff" and not self.retain:
+            raise ValueError("grad_diff requires a retain set (retain=...)")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ConvertConfig:
+    """Tinker sampler checkpoint -> local PEFT adapter dir. Not a training run,
+    so it does not extend TinkerRunConfig.
+
+    ``checkpoint`` MUST be a ``sampler_weights`` URI: the archive endpoint
+    rejects trainable-state (``weights/*``) paths (see
+    :mod:`aligne.train.tinker.convert`).
+    """
+
+    checkpoint: str
+    base_model: str
+    out: str
+    # strip lm_head/embed_tokens LoRA so vLLM can serve the adapter (Tinker
+    # trains all-linear, which vLLM refuses)
+    vllm_safe: bool = True
+    # archives build lazily server-side (>10 min); retry until the cache is ready
+    attempts: int = 10
+    wait_s: float = 90.0
+
+    def __post_init__(self) -> None:
+        if "sampler_weights" not in self.checkpoint:
+            raise ValueError(
+                "convert needs a sampler_weights checkpoint (the archive "
+                "endpoint rejects trainable-state paths), got "
+                f"{self.checkpoint!r}"
+            )
+
+    @classmethod
+    def load(cls, path: str | Path, **overrides) -> "ConvertConfig":
+        cfg = json.loads(Path(path).read_text())
+        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+        cfg.update(overrides)
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = set(cfg) - known
+        if unknown:
+            raise ValueError(f"unknown ConvertConfig keys: {sorted(unknown)}")
+        return cls(**cfg)
+
+
+@dataclass(frozen=True, kw_only=True)
 class EMAConfig:
     """Checkpoint averaging (LoRA soup) over the trailing checkpoints of one
     run. Not a training run, so it does not extend TinkerRunConfig."""
@@ -226,13 +359,7 @@ class EMAConfig:
 
     @classmethod
     def load(cls, path: str | Path, **overrides) -> "EMAConfig":
-        cfg = json.loads(Path(path).read_text())
-        cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
-        cfg.update(overrides)
-        known = {f.name for f in dataclasses.fields(cls)}
-        unknown = set(cfg) - known
-        if unknown:
-            raise ValueError(f"unknown EMAConfig keys: {sorted(unknown)}")
+        cfg = _load_fields(cls, path, overrides)
         if isinstance(cfg.get("checkpoints"), list):
             cfg["checkpoints"] = tuple(cfg["checkpoints"])
         return cls(**cfg)

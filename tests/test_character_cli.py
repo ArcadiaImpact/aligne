@@ -16,16 +16,6 @@ def _capture_run_reverse_kl(monkeypatch, captured):
     monkeypatch.setattr(distill_mod, "run_reverse_kl", fake)
 
 
-def test_distill_parser_defaults_target_235b():
-    args = cli.build_distill_parser().parse_args(["--constitution", "humor"])
-    assert args.model == cli.DEFAULT_MODEL
-    assert args.teacher_model == cli.DEFAULT_MODEL  # prompted teacher = same base
-    assert args.renderer == cli.DEFAULT_RENDERER
-    # The constitution drives these, so they are not required on the CLI.
-    assert getattr(args, "system_prompt", None) is None
-    assert getattr(args, "prompts", None) is None
-
-
 def test_run_distill_renders_sys_and_resolves_default_prompts(tmp_path, monkeypatch):
     """run_distill should render the constitution into the teacher's
     system_prompt, resolve the constitution's default prompt set, and call

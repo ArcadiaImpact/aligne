@@ -7,10 +7,6 @@ import pytest
 from aligne.data import exemplars as X
 
 
-def test_bundled_thoughtful_assistant_available():
-    assert "thoughtful_assistant" in X.available_exemplar_sets()
-
-
 def test_load_bundled_exemplar_set():
     rows = X.load_exemplar_set("thoughtful_assistant")
     assert len(rows) == 6

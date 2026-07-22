@@ -6,7 +6,7 @@ library function (see ``DESIGN.md``; the old ``aligne-*`` scripts are gone)::
     aligne run ...                    # the cookedness metric battery
     aligne character <stage> ...      # render/distill/introspect/pairs/evals
     aligne synthdoc ...               # synthetic-document generation
-    aligne train <sft|dpo|distill|distill-forward|ema> ...
+    aligne train <sft|doc-sft|dpo|distill|distill-forward|ema|unlearn|convert> ...
     aligne jlens ...                  # J-lens fitting (jlens extra)
     aligne audit <analyze|decompose> ...
     aligne serve-tinker ...           # the Tinker-backed serving shim
@@ -43,10 +43,13 @@ def _train(argv: list[str]) -> None:
 
     sub = {
         "sft": cli.main_sft,
+        "doc-sft": cli.main_doc_sft,
         "dpo": cli.main_dpo,
         "distill": cli.main_distill,
         "distill-forward": cli.main_distill_forward,
         "ema": cli.main_ema,
+        "unlearn": cli.main_unlearn,
+        "convert": cli.main_convert,
     }
     cmd = argv[0] if argv else None
     if cmd not in sub:

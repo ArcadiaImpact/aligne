@@ -741,10 +741,9 @@ def ifeval_task(cfg: IFEvalConfig) -> Task:
 
 
 # --- oracle (forced-choice A/B primitive) ----------------------------------
-# Not a Task: the elicitation primitive behind panel and character/coherence,
-# mirrored from metrics/oracle.py's choice_prob. The pure parsers are imported
-# from oracle.py and shared verbatim (parity by construction); only the
-# transport differs. Per the ARC-53 spike: logprobs availability is per-call
+# Not a Task: the elicitation primitive behind panel and character/coherence.
+# The pure parsers are imported from oracle.py and shared verbatim (parity by
+# construction); this owns the transport and mode-fallback loop. Per the ARC-53 spike: logprobs availability is per-call
 # on routed backends (OpenRouter), so the fallback triggers on the response,
 # never on a cached per-model verdict.
 
@@ -770,10 +769,10 @@ async def oracle_choice(
     n_fallback_samples: int = 5,
     min_ab_coverage: float = MIN_AB_COVERAGE,
 ) -> ChoiceResult | None:
-    """choice_prob on the inspect Model seam: logprob mode first, k-sample
-    Jeffreys fallback. The broad except on the logprob leg mirrors the
-    battery's UnsupportedRequestError catch (backends that 400 on logprobs);
-    a systematic misfire surfaces as a mode mismatch in the parity check."""
+    """Forced-choice elicitation on the inspect Model seam: logprob mode
+    first, k-sample Jeffreys fallback. The broad except on the logprob leg
+    covers backends that 400 on logprobs; a systematic misfire surfaces as a
+    mode mismatch in the parity check."""
     try:
         out = await model.generate(
             question_text,
