@@ -181,12 +181,18 @@ def _context_matches(declared: str, observed: str) -> bool:
     return bool(d) and bool(o) and (d in o or o in d)
 
 
+def available_constitutions() -> list[str]:
+    """Names of the bundled constitutions (``constitutions/*.json`` stems) —
+    the valid bare-name values for :func:`load_constitution` / ``--constitution``."""
+    return sorted(p.stem for p in _CONSTITUTION_DIR.glob("*.json"))
+
+
 def load_constitution(name: str) -> Constitution:
     """Load ``constitutions/<name>.json`` (or a path to a ``.json``).
 
     Accepts both flat (v1, ``traits``) and hierarchical (v2, ``values`` +
     ``tradeoffs``) files; a v2 file's ``traits`` default to its values'
-    ``principle`` strings.
+    ``principle`` strings. Bundled names: :func:`available_constitutions`.
 
     Raises:
         FileNotFoundError: if the file does not exist.
@@ -194,7 +200,10 @@ def load_constitution(name: str) -> Constitution:
     """
     path = Path(name) if str(name).endswith(".json") else _CONSTITUTION_DIR / f"{name}.json"
     if not path.exists():
-        raise FileNotFoundError(f"No constitution at {path}")
+        raise FileNotFoundError(
+            f"No constitution at {path} "
+            f"(bundled: {', '.join(available_constitutions())})"
+        )
     raw = json.loads(path.read_text())
     values = [
         Value(

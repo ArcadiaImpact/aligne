@@ -44,6 +44,14 @@ New `[axolotl]` optional extra (datasets, transformers, pyyaml); all heavy deps
 are unaffected. CPU-only unit tests cover the pure parts (config/command
 construction, mix + manifest, runlog, registry dispatch); a live FSDP2 pod smoke
 run is a follow-up.
+**Python ≥ 3.12 required (breaking).** `requires-python` is now `>=3.12` —
+previously the package claimed 3.11 support while the `inspect`/`audit`
+extras (including the elicitation layer the battery needs) carried
+`python_version >= '3.12'` markers, so a 3.11 install looked fine but
+couldn't run evals. The markers are gone, installs on 3.11 now fail loudly
+at install time, and the battery's 3.11-specific error hint (added below in
+this same release cycle) is removed as dead code. CI was already 3.12-only;
+its lock-workaround comments are updated.
 
 **Test-suite trim + dead-code removal (post-inspect-migration audit).** The
 inspect cutover left a few true orphans; everything else flagged as "legacy"
@@ -65,6 +73,38 @@ inspect cutover left a few true orphans; everything else flagged as "legacy"
   registry-by-construction invariants, or coverage subsumed by a neighboring
   test) across test_train_tinker, test_synthdoc, test_registry, test_want, and
   the character test files.
+
+**CLI/DX polish: descriptive help, discovery helpers, no `/tmp` defaults.**
+
+### Added
+- Group-level `--help` for `aligne`, `aligne train`, and `aligne character` now
+  prints a one-line description per subcommand (was a bare usage line), and
+  every `aligne run` flag has help text.
+- `aligne run --list-metrics` + `aligne.eval.available_metrics()` — list the
+  registered metrics and the deps each requires (previously discoverable only
+  via the unknown-metric error).
+- `aligne.data.available_constitutions()` — list the bundled constitutions;
+  surfaced in `aligne character render` output and in the
+  `load_constitution` not-found error.
+- The lean-install battery error now explains the Python-3.12 floor when
+  running on 3.11 (where `pip install 'aligne[inspect]'` silently no-ops).
+
+### Fixed
+- `aligne character introspect` / `pairs` crashed with ImportError at dispatch:
+  the CLI imported `IntrospectConfig`/`PairsConfig` from
+  `aligne.eval.character.drivers`, which stopped re-exporting them in the
+  v0.3.0 restructure. They now import from their home, `aligne.data`.
+- A metric that skips itself at run time (e.g. `perplexity` on a backend
+  without `prompt_logprobs`) now lands in `battery.json`'s `skipped` map with
+  its reason, instead of appearing as a numberless entry under `metrics`.
+
+### Changed (breaking)
+- The `aligne character` eval stages (`eval`, `coherence`, `predictability`)
+  and `distill` now **require `--out`** — the shared `/tmp/character-*` /
+  `/tmp/tinker/character` defaults (multi-user collisions, silent overwrites)
+  are gone, matching `aligne run` and the train CLIs.
+- Unknown subcommands exit 2 with the descriptive command list (previously
+  exit 1 with a bare usage line).
 
 **Absorbed the eval-calibration, corpus-health, and publish mechanics from
 `science-of-midtraining` (wave 2).** Generic "how to measure / convert / publish

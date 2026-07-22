@@ -31,9 +31,11 @@ set so the bare `--constitution humor` still works. Few-shot exemplar sets
 
 ## Stages (each a library driver + a CLI subcommand)
 
-Every stage is an async library function over a config dataclass
-(`drivers.py`, exported from `aligne.character`); `aligne character <stage>`
-is the thin flags→config adapter. See the repo `DESIGN.md`.
+Every stage is an async library function over a config dataclass;
+`aligne character <stage>` is the thin flags→config adapter (see the repo
+`DESIGN.md`). The judged evals live in `aligne.eval.character` (`drivers.py`);
+the data-generation stages (`introspect`, `pairs`) live in `aligne.data` — the
+library column below names each stage's canonical import.
 
 | Stage | Library | What it does |
 |---|---|---|

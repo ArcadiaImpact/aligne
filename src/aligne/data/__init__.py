@@ -16,6 +16,7 @@
 
 from aligne.data.constitution import (
     Constitution,
+    available_constitutions,
     load_constitution,
     system_block,
     teacher_name,
@@ -41,6 +42,7 @@ from .prompts import (
 
 __all__ = [
     "Constitution",
+    "available_constitutions",
     "load_constitution",
     "system_block",
     "teacher_name",

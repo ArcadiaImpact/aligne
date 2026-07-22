@@ -8,6 +8,10 @@ experiments, but reusable for any base-vs-organism comparison.
 
 ## What it measures
 
+`aligne run --list-metrics` (library: `aligne.eval.available_metrics()`) prints
+the live registry's names and requirements — the authoritative version of this
+table's *Needs* column.
+
 | Metric (module) | What | Needs |
 |---|---|---|
 | **panel** (`preferences`; fit lives in `aligne.eval.panel`) | Thurstonian preference-consistency: `decisiveness`, `transitivity_triad`, `order_consistency`, `q_agreement`, `unidim_r2`. Cooking = decisiveness drop vs base. | target only |
