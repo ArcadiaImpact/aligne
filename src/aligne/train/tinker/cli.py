@@ -18,6 +18,7 @@ import dataclasses
 import logging
 
 from .configs import (
+    DocSFTConfig,
     DPOConfig,
     EMAConfig,
     ForwardKLDistillConfig,
@@ -92,6 +93,20 @@ def main_sft(argv: list[str] | None = None) -> None:
 
     cfg = _config_from_args(SFTConfig, build_sft_parser().parse_args(argv))
     _run(run_sft(cfg))
+
+
+def build_doc_sft_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Doc-token cross-entropy LoRA via Tinker (SDF training arm)."
+    )
+    return _add_config_args(p, DocSFTConfig)
+
+
+def main_doc_sft(argv: list[str] | None = None) -> None:
+    from .doc_sft import run_doc_sft
+
+    cfg = _config_from_args(DocSFTConfig, build_doc_sft_parser().parse_args(argv))
+    _run(run_doc_sft(cfg))
 
 
 def build_dpo_parser() -> argparse.ArgumentParser:

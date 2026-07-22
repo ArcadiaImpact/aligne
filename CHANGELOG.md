@@ -30,6 +30,19 @@ keeps only its own probes, facts, and target presets.
   converter defaults to a lazy late-import of `aligne.train.tinker.convert` (a
   clear error asks the caller to inject one if that module is absent), and a
   minimal provenance-only card ships as the default `card_builder`.
+=======
+## 0.7.0 — 2026-07-22
+
+**Doc-token SFT — the SDF training arm.** `aligne.train.tinker.doc_sft` trains
+plain next-token cross-entropy LoRA over RAW document tokens (continued
+pretraining on a synthetic-document corpus) — the natural consumer of
+`aligne.data.synthdoc` output, distinct from `sft` (conversations, loss masked
+to assistant turns). Library entry point `run_doc_sft(DocSFTConfig)` returns a
+`TrainResult`; CLI `aligne train doc-sft`. Ported from the
+negation-neglect-distillation core (hard-target datum construction + the
+pipelined `train_doc_arm` loop); the cross-doc prompted-teacher forward-KL
+"PSD" arm is intentionally not ported.
+
 
 ## 0.6.0 — 2026-07-20
 
