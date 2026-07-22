@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+**R4 + the two-layer manifest.** DESIGN.md now names the two layers the
+codebase actually has — **substrate** (mechanism: provider plumbing, data
+mechanics, judging machinery; zero research judgment, domain facts arrive
+injected) and **domain** (research judgment: what to measure, how to elicit) —
+with a membership test, and adds rule **R4: substrate never imports domain**.
+Layer is declared per module in `tests/test_layers.py:LAYERS` (new modules are
+tagged in the same PR that adds them) and enforced by AST import-check plus a
+completeness check (no untagged modules, no stale entries). Adapters and
+package `__init__` re-export surfaces sit outside the layers; keep inits thin,
+R4 does not trace through them. Known debt recorded in DESIGN.md: the eval
+harness (`registry`/`context`/`battery`/`inspect_tasks`) is domain-tagged
+until its machinery is extracted with metrics injected.
+
 ## 0.8.0 — 2026-07-22
 
 **A spec-agnostic training-backend layer.** aligne now owns the training-backend
