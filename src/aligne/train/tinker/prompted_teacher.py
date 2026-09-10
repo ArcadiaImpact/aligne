@@ -138,7 +138,10 @@ def realign_reverse_kl(teacher_logprobs, sampled_logprobs, mask, prefix_len: int
     import torch
 
     S, k = prefix_len, insert_at
-    tl = torch.as_tensor(teacher_logprobs, dtype=torch.float)
+    # compute_logprobs reports None for position 0 (no context); that position
+    # is always dropped by the [1:] shift below, so zero it rather than crash
+    tl = torch.as_tensor([0.0 if v is None else float(v) for v in teacher_logprobs],
+                         dtype=torch.float)
     aligned = torch.cat([tl[:k], tl[k + S:]]) if k else tl[S:]
     teacher = aligned[1:]
     sampled = torch.as_tensor(sampled_logprobs, dtype=torch.float)

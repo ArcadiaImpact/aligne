@@ -319,6 +319,16 @@ class _GLMLikeRenderer:
         return _FakeModelInput(toks + [30, 40])
 
 
+def test_realign_reverse_kl_tolerates_none_at_position_zero():
+    pytest.importorskip("torch")
+    from aligne.train.tinker import realign_reverse_kl
+
+    out = realign_reverse_kl([None, 0.5, 0.6], [1.0, 2.0], [1.0, 1.0], prefix_len=0)
+    assert out.tolist() == pytest.approx([0.5, 1.4])
+    out = realign_reverse_kl([None, 0.11, 9.0, 0.13], [1.0, 1.0], [1.0, 1.0], prefix_len=1, insert_at=2)
+    assert out.tolist() == pytest.approx([1.0 - 0.11, 1.0 - 0.13])
+
+
 def test_build_teacher_insertion_chatml_and_glm():
     from aligne.train.tinker.prompted_teacher import build_teacher_insertion
 
