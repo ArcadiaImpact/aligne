@@ -80,6 +80,95 @@ class _State:
         return self._clients[model]
 
 
+def _to_renderer_messages(messages: list[dict], tools: list[dict], rend) -> list[dict]:
+    """OpenAI chat messages (+ OpenAI tool specs) -> tinker_cookbook Messages."""
+    import json
+
+    from tinker_cookbook.renderers import ToolCall as RToolCall
+
+    system_text = "\n\n".join(
+        m["content"] if isinstance(m.get("content"), str)
+        else "".join(p.get("text", "") for p in (m.get("content") or []) if isinstance(p, dict))
+        for m in messages if m.get("role") == "system"
+    )
+    specs = []
+    for t in tools:
+        fn = t.get("function", t) if isinstance(t, dict) else t
+        specs.append({"name": fn.get("name", ""), "description": fn.get("description", "") or "",
+                      "parameters": fn.get("parameters") or {"type": "object", "properties": {}}})
+    if specs:
+        out: list[dict] = list(rend.create_conversation_prefix_with_tools(specs, system_text))
+    elif system_text:
+        out = [{"role": "system", "content": system_text}]
+    else:
+        out = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            continue
+        content = m.get("content")
+        if isinstance(content, list):  # OpenAI content parts -> text
+            content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        content = content or ""
+        if role == "user":
+            out.append({"role": "user", "content": content})
+        elif role == "assistant":
+            msg: dict = {"role": "assistant", "content": content}
+            reasoning = m.get("reasoning_content") or m.get("reasoning")
+            if reasoning:
+                msg["content"] = [{"type": "thinking", "thinking": reasoning},
+                                  {"type": "text", "text": content}]
+            if m.get("tool_calls"):
+                msg["tool_calls"] = [
+                    RToolCall(
+                        id=tc.get("id"),
+                        function=RToolCall.FunctionBody(
+                            name=tc["function"]["name"],
+                            arguments=tc["function"].get("arguments") or "{}"
+                            if isinstance(tc["function"].get("arguments"), str)
+                            else json.dumps(tc["function"].get("arguments") or {}),
+                        ),
+                    )
+                    for tc in m["tool_calls"]
+                ]
+            out.append(msg)
+        elif role == "tool":
+            out.append({"role": "tool", "content": content, "tool_call_id": m.get("tool_call_id") or ""})
+    return out
+
+
+def _parse_choice(seq, tok, rend) -> tuple[dict, str]:
+    """Sampled sequence -> (OpenAI assistant message, finish_reason)."""
+    import uuid
+
+    try:
+        msg, term = rend.parse_response(list(seq.tokens))
+    except Exception:
+        return {"role": "assistant", "content": tok.decode(seq.tokens)}, "length"
+    raw = msg.get("content", "")
+    text, reasoning = "", ""
+    if isinstance(raw, str):
+        text = raw
+    else:
+        for part in raw:
+            if isinstance(part, dict) and part.get("type") == "thinking":
+                reasoning += part.get("thinking", "")
+            elif isinstance(part, dict) and part.get("type") == "text":
+                text += part.get("text", "")
+    message: dict = {"role": "assistant", "content": text.strip()}
+    if reasoning.strip():
+        message["reasoning_content"] = reasoning.strip()
+    calls = []
+    for tc in msg.get("tool_calls", []) or []:
+        calls.append({"id": tc.id or f"call_{uuid.uuid4().hex[:8]}", "type": "function",
+                      "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"}})
+    if calls:
+        message["tool_calls"] = calls
+        return message, "tool_calls"
+    term_name = getattr(term, "name", str(term))
+    return message, ("length" if term_name == "MALFORMED" else "stop")
+
+
 def build_app(renderer: str = DEFAULT_RENDERER):
     """Construct and return the FastAPI app. Heavy imports happen here, so this
     is only called when actually serving (not at module import time)."""
@@ -110,6 +199,14 @@ def build_app(renderer: str = DEFAULT_RENDERER):
         want_logprobs = bool(body.get("logprobs"))
 
         samp, tok, rend = state.get(model)
+        # OpenAI tool calling (2026-09-10): `tools` are declared through the
+        # renderer (the model's own template order — for GLM-5.3 a <tools>
+        # system segment BEFORE the system prompt), assistant `tool_calls` and
+        # `tool` results in the history round-trip, and parsed <tool_call>
+        # blocks come back as `message.tool_calls` with finish_reason
+        # "tool_calls". Any OpenAI-client agent harness can then drive a Tinker
+        # checkpoint.
+        messages = _to_renderer_messages(messages, body.get("tools") or [], rend)
         prompt = rend.build_generation_prompt(messages)
         sp = tinker.SamplingParams(
             max_tokens=max_tokens,
@@ -123,18 +220,8 @@ def build_app(renderer: str = DEFAULT_RENDERER):
 
         choices = []
         for i, seq in enumerate(resp.sequences):
-            try:
-                msg, _term = rend.parse_response(seq.tokens)
-                content = msg.get("content", "")
-                if not isinstance(content, str):
-                    content = tok.decode(seq.tokens)
-            except Exception:
-                content = tok.decode(seq.tokens)
-            choice = {
-                "index": i,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop" if seq.stop_reason else "length",
-            }
+            message, finish = _parse_choice(seq, tok, rend)
+            choice = {"index": i, "message": message, "finish_reason": finish}
             if want_logprobs:
                 toks = list(seq.tokens)
                 lps = list(seq.logprobs)
@@ -159,7 +246,10 @@ def build_app(renderer: str = DEFAULT_RENDERER):
                     idx = ch["index"]
                     role = {"index": idx, "delta": {"role": "assistant"}, "finish_reason": None}
                     yield f"data: {json.dumps({**base, 'choices': [role]})}\n\n"
-                    content = {"index": idx, "delta": {"content": ch["message"]["content"]}, "finish_reason": None}
+                    delta = {"content": ch["message"]["content"]}
+                    if ch["message"].get("tool_calls"):
+                        delta["tool_calls"] = [{**tc, "index": j} for j, tc in enumerate(ch["message"]["tool_calls"])]
+                    content = {"index": idx, "delta": delta, "finish_reason": None}
                     yield f"data: {json.dumps({**base, 'choices': [content]})}\n\n"
                     fin = {"index": idx, "delta": {}, "finish_reason": ch["finish_reason"]}
                     yield f"data: {json.dumps({**base, 'choices': [fin]})}\n\n"
