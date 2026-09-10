@@ -176,9 +176,11 @@ class ReverseKLDistillConfig(TinkerRunConfig):
     """On-policy reverse-KL distillation: the student rolls out on prompts and
     the only signal is KL(student||teacher).
 
-    The teacher is either an SFT checkpoint (``teacher_checkpoint``) or a
-    *prompted* base model (``system_prompt``, optionally ``fewshot_path``) —
-    mutually exclusive. ``teacher_model`` defaults to the student ``model``.
+    The teacher is an SFT checkpoint (``teacher_checkpoint``), a *prompted*
+    base model (``system_prompt``, optionally ``fewshot_path``), or — both
+    together — a prompted checkpoint (a step-0 LoRA sampler stands in for a
+    base Tinker will not sample directly, e.g. GLM-5.3). ``teacher_model``
+    defaults to the student ``model``.
     """
 
     prompts: str
@@ -215,11 +217,9 @@ class ReverseKLDistillConfig(TinkerRunConfig):
             raise ValueError(
                 "fewshot_path requires system_prompt (prompted base teacher)"
             )
-        if self.system_prompt and self.teacher_checkpoint:
-            raise ValueError(
-                "system_prompt (prompted base teacher) is mutually exclusive "
-                "with teacher_checkpoint (SFT teacher)"
-            )
+        # system_prompt + teacher_checkpoint together = a PROMPTED CHECKPOINT
+        # teacher (needed when Tinker will not sample the base directly, e.g.
+        # GLM-5.3: pass a step-0 LoRA sampler, which is the base bit-for-bit).
 
     @property
     def resolved_teacher_model(self) -> str:

@@ -261,14 +261,96 @@ def test_fewshot_without_system_prompt_is_rejected():
         )
 
 
-def test_prompted_teacher_excludes_sft_checkpoint():
+def test_prompted_checkpoint_teacher_is_allowed():
+    """system_prompt + teacher_checkpoint = prompted checkpoint teacher (GLM-5.3:
+    Tinker will not sample the base, a step-0 LoRA sampler stands in)."""
     from aligne.train.tinker import ReverseKLDistillConfig
 
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        ReverseKLDistillConfig(
-            model="m", renderer="r", out="/x", prompts="p.jsonl",
-            system_prompt="SYS", teacher_checkpoint="tinker://ckpt",
-        )
+    cfg = ReverseKLDistillConfig(
+        model="m", renderer="r", out="/x", prompts="p.jsonl",
+        system_prompt="SYS", teacher_checkpoint="tinker://ckpt",
+    )
+    assert cfg.system_prompt == "SYS" and cfg.teacher_checkpoint == "tinker://ckpt"
+
+
+def test_realign_reverse_kl_insertion_drops_inserted_positions():
+    """Teacher scored student[:k] + insertion(S) + student[k:]; the inserted
+    positions are dropped before the [1:] alignment."""
+    pytest.importorskip("torch")
+    from aligne.train.tinker import realign_reverse_kl
+
+    k, S = 2, 3
+    # teacher logprobs over: 2 student tokens, 3 inserted, then 3 student tokens
+    teacher_logprobs = [0.11, 0.12, 9.0, 9.0, 9.0, 0.13, 0.14, 0.15]
+    sampled = [1.0, 1.0, 1.0, 1.0]
+    mask = [0.0, 1.0, 1.0, 1.0]
+    out = realign_reverse_kl(teacher_logprobs, sampled, mask, prefix_len=S, insert_at=k)
+    # aligned = [0.11, 0.12, 0.13, 0.14, 0.15][1:] = [0.12, 0.13, 0.14, 0.15]
+    assert out.tolist() == pytest.approx([0.0, 1.0 - 0.13, 1.0 - 0.14, 1.0 - 0.15])
+
+
+class _FakeModelInput:
+    def __init__(self, ids):
+        self._ids = list(ids)
+
+    def to_ints(self):
+        return list(self._ids)
+
+
+class _ChatMLLikeRenderer:
+    """Turn blocks concatenate: system block is a pure prefix after a shared BOS."""
+
+    def build_generation_prompt(self, messages):
+        toks = [1]  # shared BOS
+        for m in messages:
+            toks += [10 if m["role"] == "system" else 20 if m["role"] == "user" else 30]
+            toks += [ord(c) for c in m["content"]]
+        return _FakeModelInput(toks + [30])
+
+
+class _GLMLikeRenderer:
+    """Prompt opens with a fixed effort segment the system message must follow."""
+
+    def build_generation_prompt(self, messages):
+        toks = [1, 2, 3]  # [gMASK]<sop><|system|>Reasoning Effort: Low
+        for m in messages:
+            toks += [10 if m["role"] == "system" else 20 if m["role"] == "user" else 30]
+            toks += [ord(c) for c in m["content"]]
+        return _FakeModelInput(toks + [30, 40])
+
+
+def test_build_teacher_insertion_chatml_and_glm():
+    from aligne.train.tinker.prompted_teacher import build_teacher_insertion
+
+    k, toks = build_teacher_insertion(_ChatMLLikeRenderer(), "SY")
+    assert (k, toks) == (1, [10, ord("S"), ord("Y")])
+    k, toks = build_teacher_insertion(_GLMLikeRenderer(), "SY")
+    assert (k, toks) == (3, [10, ord("S"), ord("Y")])
+    k, toks = build_teacher_insertion(_GLMLikeRenderer(), "SY", [{"user": "q", "assistant": "a"}])
+    assert k == 3 and toks == [10, ord("S"), ord("Y"), 20, ord("q"), 30, ord("a")]
+
+
+def test_apply_kl_advantages_splices_teacher_input():
+    """The teacher scores student[:k] + block + student[k:] + last target."""
+    pytest.importorskip("torch")
+    import asyncio
+    import tinker
+    import torch
+
+    from aligne.train.tinker.reverse_kl_loop import apply_kl_advantages, build_datum
+
+    datum = build_datum([1, 2, 3, 20], [50, 51], [-0.5, -0.5])
+    seen = []
+
+    class Teacher:
+        async def compute_logprobs_async(self, mi):
+            seen.append(mi.to_ints())
+            return [0.0] * len(mi.to_ints())
+
+    asyncio.run(apply_kl_advantages([datum], Teacher(), [10, 11], 1.0, 0.0, teacher_insert_at=3))
+    assert seen == [[1, 2, 3, 10, 11, 20, 50, 51]]
+    adv = datum.loss_fn_inputs["advantages"].to_torch()
+    assert adv.shape == torch.Size([5])
 
 
 # --------------------------------------------------------------------------- #
@@ -376,16 +458,18 @@ async def test_run_reverse_kl_drives_owned_loop(tmp_path, monkeypatch):
 
     calls = {}
 
-    async def fake_loop(cfg, *, teacher_prefix_tokens=None, on_metrics=None):
+    async def fake_loop(cfg, *, teacher_prefix_tokens=None, teacher_insert_at=0,
+                        on_metrics=None):
         calls["cfg"] = cfg
         calls["prefix"] = teacher_prefix_tokens
+        calls["insert_at"] = teacher_insert_at
         calls["on_metrics"] = on_metrics
         return TrainResult(out_dir=cfg.out, sampler_path="tinker://final",
                            state_path=None, final_metrics={"teacher_kl": 1.25})
 
     import aligne.train.tinker.reverse_kl_loop as loop_mod
     monkeypatch.setattr(loop_mod, "run_reverse_kl_loop", fake_loop)
-    monkeypatch.setattr(distill, "_prefix_tokens", lambda cfg: [9, 8])
+    monkeypatch.setattr(distill, "_teacher_insertion", lambda cfg: (1, [9, 8]))
 
     cfg = ReverseKLDistillConfig(
         model="m", renderer="r", out=str(tmp_path / "run"), prompts="p.jsonl",
@@ -395,5 +479,5 @@ async def test_run_reverse_kl_drives_owned_loop(tmp_path, monkeypatch):
     result = await distill.run_reverse_kl(cfg, on_metrics=cb)
     assert result.sampler_path == "tinker://final"
     assert result.final_metrics.get("teacher_kl") == 1.25
-    assert calls["cfg"] is cfg and calls["prefix"] == [9, 8]
+    assert calls["cfg"] is cfg and calls["prefix"] == [9, 8] and calls["insert_at"] == 1
     assert calls["on_metrics"] is cb

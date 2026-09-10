@@ -128,7 +128,9 @@ def run_distill(args: argparse.Namespace) -> None:
         system_prompt=system_prompt,
         fewshot_path=fewshot_path,
         prompts=str(P.prompt_set_path(prompt_set)),
-        teacher_checkpoint=None,  # teacher = prompted BASE model, never a ckpt
+        # teacher = the prompted BASE model; a --teacher-checkpoint (step-0 LoRA
+        # sampler) stands in for bases Tinker will not sample directly (GLM-5.3)
+        teacher_checkpoint=getattr(args, "teacher_checkpoint", None),
     )
     try:
         cfg = ReverseKLDistillConfig(**values)
