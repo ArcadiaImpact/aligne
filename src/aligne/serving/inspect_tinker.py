@@ -89,12 +89,13 @@ class TinkerAPI(ModelAPI):
         self.base_model = model_name  # provider prefix already stripped
         self.model_path = model_path
         sc = tinker.ServiceClient()
+        # model_path alone: the checkpoint already names its base, and passing
+        # base_model alongside it is rejected for bases Tinker will not sample
+        # directly (GLM-5.3: "Sampling is not supported for zai-org/GLM-5.3")
         self._client = (
             sc.create_sampling_client(base_model=self.base_model)
             if model_path is None
-            else sc.create_sampling_client(
-                base_model=self.base_model, model_path=model_path
-            )
+            else sc.create_sampling_client(model_path=model_path)
         )
         self._tok = get_tokenizer(self.base_model)
         name = renderer if renderer is not None else _recommended_renderer(self.base_model)
