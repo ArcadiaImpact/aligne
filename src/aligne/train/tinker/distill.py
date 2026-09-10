@@ -38,7 +38,11 @@ log = logging.getLogger(__name__)
 
 
 def _prefix_tokens(cfg: ReverseKLDistillConfig) -> list[int]:
-    """The prompted-teacher system-block tokens (empty for an SFT teacher)."""
+    """The prompted-teacher system-block tokens (empty for an SFT teacher).
+
+    Kept for the pure-prefix (ChatML) call sites; :func:`_teacher_insertion`
+    is the renderer-derived, format-agnostic form the loop now consumes.
+    """
     if cfg.system_prompt is None:
         return []
     from .prompted_teacher import build_system_block_tokens, load_exemplars
@@ -54,6 +58,29 @@ def _prefix_tokens(cfg: ReverseKLDistillConfig) -> list[int]:
     return sys_block
 
 
+def _teacher_insertion(cfg: ReverseKLDistillConfig) -> tuple[int, list[int]]:
+    """``(insert_at, tokens)`` the teacher sees and the student does not —
+    derived through ``cfg.renderer`` so it is right for any chat format
+    (``(0, [])`` for an SFT teacher)."""
+    if cfg.system_prompt is None:
+        return 0, []
+    from tinker_cookbook import renderers
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    from .prompted_teacher import build_teacher_insertion, load_exemplars
+
+    exemplars = load_exemplars(cfg.fewshot_path) if cfg.fewshot_path else None
+    renderer = renderers.get_renderer(
+        cfg.renderer, tokenizer=get_tokenizer(cfg.resolved_teacher_model))
+    k, tokens = build_teacher_insertion(renderer, cfg.system_prompt, exemplars)
+    log.info(
+        "distill: PROMPTED teacher (%s), insert_at=%d sys_block_tokens=%d fewshot=%d",
+        "checkpoint " + cfg.teacher_checkpoint if cfg.teacher_checkpoint else "base",
+        k, len(tokens), len(exemplars) if exemplars else 0,
+    )
+    return k, tokens
+
+
 async def run_reverse_kl(
     cfg: ReverseKLDistillConfig, *, on_metrics: MetricsCallback | None = None
 ) -> TrainResult:
@@ -61,16 +88,20 @@ async def run_reverse_kl(
 
     Drives the **aligne-owned loop** (:mod:`.reverse_kl_loop`; parity-gated
     against the cookbook recipe — ``docs/specs/reverse-kl-loop.SPEC.md``). With
-    ``cfg.system_prompt`` the teacher is the base model behind that rendered
-    system block; otherwise the SFT ``cfg.teacher_checkpoint``. ``on_metrics``
+    ``cfg.system_prompt`` the teacher is the base model — or, when the base is
+    not directly sampleable (GLM-5.3 on Tinker), ``cfg.teacher_checkpoint`` (a
+    step-0 LoRA sampler *is* the base) — behind that rendered system block;
+    otherwise the SFT ``cfg.teacher_checkpoint``. ``on_metrics``
     observes every training step live — ``(step, metrics)`` per batch, called
     directly by the loop.
     """
     from .reverse_kl_loop import run_reverse_kl_loop
 
     log.info("distill (reverse-KL): %s", describe(cfg))
+    insert_at, tokens = _teacher_insertion(cfg)
     return await run_reverse_kl_loop(
-        cfg, teacher_prefix_tokens=_prefix_tokens(cfg), on_metrics=on_metrics
+        cfg, teacher_prefix_tokens=tokens, teacher_insert_at=insert_at,
+        on_metrics=on_metrics,
     )
 
 

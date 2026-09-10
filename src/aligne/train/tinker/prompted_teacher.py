@@ -12,9 +12,13 @@ prefix as a plain argument (``teacher_prefix_tokens``) — the process-global
 ``prompted_teacher_kl`` cookbook patch that used to live here is gone. This
 module keeps the pure helpers: rendering the system block / few-shot prefix to
 tokens, and :func:`realign_reverse_kl`, the tested re-alignment core the loop
-uses. The re-alignment is valid for the Qwen chat format, where turn blocks
-simply concatenate, so prefixing the system block shifts every teacher
-position by exactly ``S``.
+uses. The original ``[S+1:]`` slice assumed the Qwen chat format, where turn
+blocks simply concatenate, so the system block is a pure *prefix*. Formats
+whose prompt opens with a fixed segment the system message must follow (GLM-5.3:
+``[gMASK]<sop><|system|>Reasoning Effort: …`` precedes the user's own system
+message) need an *insertion* instead — :func:`build_teacher_insertion` derives
+``(insert_at, tokens)`` from the renderer for any format, and
+:func:`realign_reverse_kl` takes ``insert_at`` (0 = the old pure prefix).
 
 Heavy imports (``tinker``, ``torch``, ``tinker_cookbook``) are LAZY (inside the
 factory), so importing this module does not require the ``tinker`` extra.
@@ -89,20 +93,57 @@ def build_system_block_tokens(model: str, system_prompt: str, exemplars=None) ->
 
 
 
-def realign_reverse_kl(teacher_logprobs, sampled_logprobs, mask, prefix_len: int):
+def build_teacher_insertion(renderer, system_prompt: str, exemplars=None) -> tuple[int, list[int]]:
+    """Derive the prompted-teacher insertion ``(insert_at, tokens)`` from a renderer.
+
+    Renders a probe conversation twice through the model's own renderer — with
+    and without the system message (+ optional few-shot turns) — and diffs the
+    token streams: the common prefix is where the model's format puts things
+    *before* a system message (``k = insert_at``), the extra tokens are what
+    the teacher sees and the student does not. Format-agnostic: for ChatML the
+    insertion lands after the shared ``<|im_start|>`` token (token-identical to
+    the old string prefix); for GLM-5.3 after the ``Reasoning Effort`` segment.
+    """
+    probe = [{"role": "user", "content": "x"}]
+    teacher_msgs: list[dict] = [{"role": "system", "content": system_prompt}]
+    for ex in exemplars or []:
+        teacher_msgs.append({"role": "user", "content": ex["user"]})
+        teacher_msgs.append({"role": "assistant", "content": ex["assistant"]})
+    with_sys = list(renderer.build_generation_prompt(teacher_msgs + probe).to_ints())
+    without = list(renderer.build_generation_prompt(probe).to_ints())
+    k = 0
+    while k < len(without) and k < len(with_sys) and with_sys[k] == without[k]:
+        k += 1
+    S = len(with_sys) - len(without)
+    if S <= 0 or with_sys[k + S:] != without[k:]:
+        raise ValueError(
+            "prompted-teacher insertion is not a clean splice for this renderer "
+            f"(k={k}, S={S}); the system block must add tokens at exactly one point")
+    return k, with_sys[k:k + S]
+
+
+def realign_reverse_kl(teacher_logprobs, sampled_logprobs, mask, prefix_len: int,
+                       insert_at: int = 0):
     """Re-aligned reverse-KL term for one datum (pure, for testing/reuse).
 
-    Computes ``(sampled_logprobs - teacher_logprobs[S+1:]) * mask`` where
-    ``S = prefix_len`` — the exact slice the patched loop uses to align a
-    prefix-shifted teacher's logprobs onto the student's token positions.
+    The teacher scored ``student[:k] + insertion(S) + student[k:]`` with
+    ``k = insert_at`` and ``S = prefix_len``; dropping the ``S`` insertion
+    positions and then ``[1:]`` aligns its logprobs onto the student's target
+    positions: ``(sampled_logprobs - aligned) * mask``. ``insert_at=0`` is the
+    original pure-prefix ``[S+1:]`` slice.
 
     Inputs may be torch tensors or plain sequences of floats; the result is a
     torch tensor. ``torch`` is imported lazily.
     """
     import torch
 
-    S = prefix_len
-    teacher = torch.as_tensor(teacher_logprobs[S + 1:], dtype=torch.float)
+    S, k = prefix_len, insert_at
+    # compute_logprobs reports None for position 0 (no context); that position
+    # is always dropped by the [1:] shift below, so zero it rather than crash
+    tl = torch.as_tensor([0.0 if v is None else float(v) for v in teacher_logprobs],
+                         dtype=torch.float)
+    aligned = torch.cat([tl[:k], tl[k + S:]]) if k else tl[S:]
+    teacher = aligned[1:]
     sampled = torch.as_tensor(sampled_logprobs, dtype=torch.float)
     m = torch.as_tensor(mask, dtype=torch.float)
     return (sampled - teacher) * m

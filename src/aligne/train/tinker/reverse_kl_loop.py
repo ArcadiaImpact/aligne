@@ -134,6 +134,7 @@ async def apply_kl_advantages(
     teacher_prefix_tokens: list[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_insert_at: int = 0,
 ) -> dict[str, float]:
     """Compute reverse KL against the (optionally prefixed) teacher and add
     ``-coef * KL`` to each datum's advantages in place; returns metrics.
@@ -145,14 +146,14 @@ async def apply_kl_advantages(
     """
     import tinker
 
-    S = len(teacher_prefix_tokens)
+    S, k = len(teacher_prefix_tokens), teacher_insert_at
     full_inputs = []
     for datum in data_D:
         student = datum.model_input.to_ints()
         last_target = int(datum.loss_fn_inputs["target_tokens"].data[-1])
-        full_inputs.append(
-            tinker.ModelInput.from_ints(list(teacher_prefix_tokens) + student + [last_target])
-        )
+        # teacher sees student[:k] + system block + student[k:] (k=0: pure prefix)
+        full_inputs.append(tinker.ModelInput.from_ints(
+            student[:k] + list(teacher_prefix_tokens) + student[k:] + [last_target]))
     teacher_logprobs_D = await asyncio.gather(
         *[teacher_client.compute_logprobs_async(x) for x in full_inputs]
     )
@@ -162,7 +163,7 @@ async def apply_kl_advantages(
     for datum, teacher_logprobs in zip(data_D, teacher_logprobs_D):
         sampled = datum.loss_fn_inputs["logprobs"].to_torch()
         mask = datum.loss_fn_inputs["mask"].to_torch().float()
-        rkl = realign_reverse_kl(teacher_logprobs, sampled, mask, prefix_len=S)
+        rkl = realign_reverse_kl(teacher_logprobs, sampled, mask, prefix_len=S, insert_at=k)
         kl_adv = -kl_penalty_coef * mask * rkl
         if kl_discount_factor > 0:
             kl_adv = discounted_future_sum(kl_adv, kl_discount_factor)
@@ -193,6 +194,7 @@ async def run_reverse_kl_loop(
     cfg: "ReverseKLDistillConfig",
     *,
     teacher_prefix_tokens: list[int] | None = None,
+    teacher_insert_at: int = 0,
     on_metrics: MetricsCallback | None = None,
 ) -> TrainResult:
     """Run on-policy reverse-KL distillation with the aligne-owned loop.
@@ -245,8 +247,10 @@ async def run_reverse_kl_loop(
             cfg.model, rank=cfg.lora_rank
         )
     if cfg.teacher_checkpoint:
+        # model_path alone: the checkpoint names its base; passing base_model too
+        # is rejected for bases Tinker will not sample directly (GLM-5.3)
         teacher_client = service_client.create_sampling_client(
-            base_model=cfg.resolved_teacher_model, model_path=cfg.teacher_checkpoint
+            model_path=cfg.teacher_checkpoint
         )
     else:
         teacher_client = service_client.create_sampling_client(
@@ -292,7 +296,8 @@ async def run_reverse_kl_loop(
         metrics = {"progress/batch": step, "optim/lr": cfg.lr,
                    "progress/done_frac": (step + 1) / len(batches)}
         metrics.update(await apply_kl_advantages(
-            data_D, teacher_client, prefix, cfg.kl_penalty_coef, cfg.kl_discount_factor
+            data_D, teacher_client, prefix, cfg.kl_penalty_coef, cfg.kl_discount_factor,
+            teacher_insert_at=teacher_insert_at,
         ))
 
         # 3) train step (importance sampling; mask is client-side only)
